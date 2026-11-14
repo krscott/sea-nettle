@@ -1,49 +1,59 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs =
-    {
-      nixpkgs,
-      flake-utils,
-      ...
-    }:
+    { self, nixpkgs }:
     let
+      inherit (nixpkgs) lib;
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
       ];
+      forAllSystems = f: lib.genAttrs supportedSystems (system: f nixpkgs.legacyPackages.${system});
     in
-    flake-utils.lib.eachSystem supportedSystems (
-      system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
+    {
+      nixosModules = {
+        jellyfin = ./nix/modules/jellyfin.nix;
+        jellyfin-plugins = ./nix/modules/jellyfin-plugins.nix;
+        server-sync = ./nix/modules/server-sync.nix;
+        replica = ./nix/modules/replica.nix;
+      };
 
-        package = pkgs.callPackage ./default.nix { };
-      in
-      {
-        packages = {
-          "sea-nettle" = package;
-          default = package;
-        };
+      packages = forAllSystems (pkgs: rec {
+        jellyfin-plugin-peer-login = pkgs.callPackage ./plugin/package.nix { };
+        default = jellyfin-plugin-peer-login;
+      });
 
-        devShells.default = pkgs.mkShell {
-          inputsFrom = [ package ];
+      # Fast checks only; `nix flake check` runs these on every PR.
+      checks = forAllSystems (pkgs: {
+        # Building the plugin runs its unit tests.
+        plugin = self.packages.${pkgs.stdenv.hostPlatform.system}.jellyfin-plugin-peer-login;
+        modules = import ./nix/tests/modules.nix { inherit nixpkgs pkgs; };
+        plugin-install = import ./nix/tests/plugin-install.nix { inherit pkgs; };
+      });
 
+      # Heavy checks stay out of `checks`; `just verify` and CI on main build them.
+      legacyPackages = forAllSystems (pkgs: {
+        heavyChecks.replica-login = pkgs.testers.runNixOSTest ./nix/tests/replica-login.nix;
+      });
+
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
           packages = with pkgs; [
+            bash
+            dotnetCorePackages.sdk_10_0
             just
             nixfmt
-            shfmt
             shellcheck
-            bash
+            shfmt
           ];
+          DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+          DOTNET_NOLOGO = "1";
         };
+      });
 
-        formatter = pkgs.nixfmt;
-      }
-    );
+      formatter = forAllSystems (pkgs: pkgs.nixfmt);
+    };
 }

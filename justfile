@@ -3,23 +3,13 @@ set positional-arguments
 default:
     just --list
 
+# Build the Peer Login plugin package; this runs its unit tests.
 build:
-    printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'printf '\''Hello from hello.sh\n'\''' > hello.sh
-    chmod +x hello.sh
+    nix build -L .#jellyfin-plugin-peer-login
 
-run: build
-    ./hello.sh
-
-# Test the locally built program.
-test: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    expected='Hello from hello.sh'
-    actual=$(./hello.sh)
-    if [[ "$actual" != "$expected" ]]; then
-        printf 'Expected: %s\nActual: %s\n' "$expected" "$actual" >&2
-        exit 1
-    fi
+# Run the plugin unit tests with the local .NET SDK.
+test:
+    dotnet test plugin/Jellyfin.Plugin.PeerLogin.Tests
 
 # Format files, or all tracked files when no files are provided.
 format *files:
@@ -35,6 +25,7 @@ _format mode *files:
     set -euo pipefail
 
     declare -a files=()
+    declare -a cs_files=()
     mode="$1"
     shift
 
@@ -71,8 +62,19 @@ _format mode *files:
                     shfmt -w -i 4 "$file"
                 fi
             ;;
+            *.cs)
+                cs_files+=("$file")
+            ;;
         esac
     done
+
+    if ((${#cs_files[@]} > 0)); then
+        declare -a verify=()
+        if [[ "$mode" == check ]]; then
+            verify=(--verify-no-changes)
+        fi
+        dotnet format whitespace . --folder "${verify[@]}" --include "${cs_files[@]}"
+    fi
 
 # Check tracked shell scripts and Git hooks.
 lint:
@@ -85,9 +87,23 @@ lint:
         esac
     done < <(git ls-files -z)
 
-# Run non-mutating formatting, shell, and Nix checks.
+# Run the fast checks that PR CI runs: formatting, lint, Nix eval tests, and plugin unit tests.
 check: format-check lint
     nix flake check -L --no-update-lock-file
+
+# Run the heavy NixOS VM test of a source and a replica Jellyfin.
+vm-test:
+    nix build -L --no-link --no-update-lock-file .#heavyChecks.replica-login
+
+# Run every test that covers a requirement.
+verify: check vm-test
+
+# Regenerate the plugin's NuGet lock file after changing package references.
+update-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fetch_deps=$(nix build --no-link --print-out-paths .#jellyfin-plugin-peer-login.fetch-deps)
+    "$fetch_deps" plugin/deps.json
 
 # Format staged files for git pre-commit.
 pre-commit:
