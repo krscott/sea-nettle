@@ -5,7 +5,6 @@ from __future__ import annotations
 import http.client
 import json
 import re
-import signal
 import sys
 import urllib.error
 import urllib.request
@@ -128,10 +127,6 @@ def read_password(path: Path) -> str:
     return password
 
 
-# These wait while a session is open, then act as they would have (R-PAIR-3).
-TERMINATION = {signal.SIGTERM, signal.SIGHUP}
-
-
 @contextmanager
 def signed_in(url: str, *, name: str, password_file: Path) -> Generator[Jellyfin]:
     """Signs in as the administrator, and ends the session even on failure (R-PAIR-3).
@@ -139,20 +134,6 @@ def signed_in(url: str, *, name: str, password_file: Path) -> Generator[Jellyfin
     A failed sign-out leaves the yielded client's `signed_out` false.
     """
     password = read_password(password_file)
-    mask = signal.pthread_sigmask(signal.SIG_BLOCK, TERMINATION)
-    try:
-        api = _sign_in(url, name=name, password=password, password_file=password_file)
-        try:
-            yield api
-        finally:
-            # Ctrl-C still interrupts the work, but not the sign-out.
-            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
-            api.sign_out()
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-
-
-def _sign_in(url: str, *, name: str, password: str, password_file: Path) -> Jellyfin:
     try:
         answer = as_object(
             Jellyfin(url).request(
@@ -176,8 +157,10 @@ def _sign_in(url: str, *, name: str, password: str, password_file: Path) -> Jell
         raise Fatal(f"{e} Check `systemctl status jellyfin.service`.") from None
 
     api = Jellyfin(url, token=text(answer, "AccessToken"))
-    policy = as_object(as_object(answer.get("User")).get("Policy"))
-    if not flag(policy, "IsAdministrator", default=False):
+    try:
+        policy = as_object(as_object(answer.get("User")).get("Policy"))
+        if not flag(policy, "IsAdministrator", default=False):
+            raise Fatal(f"{name} is not an administrator on this server.")
+        yield api
+    finally:
         api.sign_out()
-        raise Fatal(f"{name} is not an administrator on this server.")
-    return api

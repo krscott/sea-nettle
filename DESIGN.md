@@ -251,10 +251,10 @@ Python with no dependencies outside the standard library.
 
 It signs in to Jellyfin's loopback URL as the initial administrator, with the
 password read from `initialAdmin.passwordFile` (R-PAIR-2), and signs out when
-it finishes, even after a failure (R-PAIR-3). SIGTERM and SIGHUP are blocked
-while the session is open and take effect after the sign-out; Ctrl-C
-interrupts the work but not the sign-out. If the sign-out fails, the command
-says how to remove the session and exits 1. It signs in with a fixed device
+it finishes, even after a failure, Ctrl-C, or SIGTERM (R-PAIR-3). A signal
+during the sign-out request itself, or SIGKILL, leaves the token until the
+next successful run revokes it. If the sign-out fails, the command says how to
+remove the session and exits 1. It signs in with a fixed device
 ID, so a successful sign-in revokes the token of an earlier run that could not
 sign out, or of a run still going on the same host. A 401 at sign-out
 therefore counts as signed out, with a note: it can also mean the account was

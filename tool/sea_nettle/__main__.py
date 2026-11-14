@@ -7,8 +7,10 @@ does, 1 when the command fails, and 2 for usage errors.
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from pathlib import Path
+from types import FrameType
 
 from .jellyfin import Fatal, signed_in
 from .report import build
@@ -45,8 +47,14 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _exit_on_sigterm(signum: int, frame: FrameType | None) -> None:
+    raise SystemExit(128 + signum)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    # SIGTERM ends the run the way Ctrl-C does, through the sign-out (R-PAIR-3).
+    signal.signal(signal.SIGTERM, _exit_on_sigterm)
     try:
         with signed_in(args.url, name=args.admin_name, password_file=args.password_file) as api:
             snapshot = collect(api)

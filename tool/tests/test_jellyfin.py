@@ -141,24 +141,6 @@ def test_revoked_token_counts_as_signed_out(
     assert "If the account was disabled" in capsys.readouterr().err
 
 
-def test_termination_waits_for_sign_out(stub: tuple[Stub, str], password_file: Path) -> None:
-    state, url = stub
-    state.answers["POST /Users/AuthenticateByName"] = (200, ADMIN)
-    state.answers["POST /Sessions/Logout"] = (204, None)
-    events: list[str] = []
-    state.on_call = events.append
-    previous = signal.signal(signal.SIGTERM, lambda signum, frame: events.append("SIGTERM"))
-    try:
-        with signed_in(url, name="admin", password_file=password_file):
-            blocked = signal.pthread_sigmask(signal.SIG_BLOCK, set())
-            assert {signal.SIGTERM, signal.SIGHUP} <= blocked
-            signal.pthread_kill(threading.get_ident(), signal.SIGTERM)
-        assert events[-2:] == ["POST /Sessions/Logout", "SIGTERM"]
-        assert signal.SIGTERM not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
-    finally:
-        signal.signal(signal.SIGTERM, previous)
-
-
 def run_status(url: str, password_file: Path) -> int:
     return main(
         [
@@ -229,6 +211,23 @@ def test_failed_sign_out_fails_the_run(
     # The report still prints; the error says how to end the session.
     assert json.loads(captured.out)["attention"]
     assert 'Remove the "sea-nettle" device under Dashboard > Devices' in captured.err
+
+
+def test_sigterm_signs_out(stub: tuple[Stub, str], password_file: Path) -> None:
+    state, url = stub
+    healthy(state)
+    main_thread = threading.get_ident()
+    state.on_call = lambda call: (
+        signal.pthread_kill(main_thread, signal.SIGTERM) if call == "GET /Users" else None
+    )
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(SystemExit) as exit_info:
+            run_status(url, password_file)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert exit_info.value.code == 128 + signal.SIGTERM
+    assert state.calls[-1] == "POST /Sessions/Logout"
 
 
 def test_local_http_error_is_one_line(
