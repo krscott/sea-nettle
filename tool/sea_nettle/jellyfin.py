@@ -12,7 +12,6 @@ import urllib.request
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from types import FrameType
 
 from .model import as_object, flag, text
 
@@ -31,6 +30,10 @@ class HttpStatus(Fatal):
     def __init__(self, message: str, *, status: int) -> None:
         super().__init__(message)
         self.status = status
+
+
+class Unanswered(Fatal):
+    """Jellyfin took the request but gave no answer in time."""
 
 
 class Jellyfin:
@@ -72,8 +75,10 @@ class Jellyfin:
             ) from None
         except urllib.error.URLError as e:
             raise Fatal(f"Cannot reach Jellyfin at {self.url} for {call}: {e.reason}.") from None
-        except (TimeoutError, http.client.HTTPException, ConnectionError) as e:
-            raise Fatal(f"Jellyfin did not answer {call}: {str(e) or type(e).__name__}.") from None
+        except TimeoutError:
+            raise Unanswered(f"Jellyfin did not answer {call} in time.") from None
+        except (http.client.HTTPException, ConnectionError) as e:
+            raise Fatal(f"Jellyfin dropped {call}: {str(e) or type(e).__name__}.") from None
         return json.loads(content) if content.strip() else None
 
     def get(self, path: str) -> object:
@@ -87,7 +92,13 @@ class Jellyfin:
             if e.status != 401:
                 self._report_sign_out_failure(e)
                 return
-            # A later run's sign-in has already revoked this token.
+            # The token no longer works: a later run's sign-in revoked it, or the account
+            # was disabled, which keeps the token for when it is enabled again.
+            print(
+                "sea-nettle: Jellyfin no longer accepts this run's token. If the account was "
+                f'disabled, remove the "{CLIENT}" device under Dashboard > Devices.',
+                file=sys.stderr,
+            )
         except Fatal as e:
             self._report_sign_out_failure(e)
             return
@@ -117,18 +128,8 @@ def read_password(path: Path) -> str:
     return password
 
 
-class _Termination:
-    """Turns SIGTERM and SIGHUP into SystemExit, so `finally` blocks run, or defers them."""
-
-    def __init__(self) -> None:
-        self.deferring = False
-        self.pending: int | None = None
-
-    def __call__(self, signum: int, frame: FrameType | None) -> None:
-        if not self.deferring:
-            raise SystemExit(128 + signum)
-        if self.pending is None:
-            self.pending = signum
+# These wait while a session is open, then act as they would have (R-PAIR-3).
+TERMINATION = {signal.SIGTERM, signal.SIGHUP}
 
 
 @contextmanager
@@ -138,6 +139,20 @@ def signed_in(url: str, *, name: str, password_file: Path) -> Generator[Jellyfin
     A failed sign-out leaves the yielded client's `signed_out` false.
     """
     password = read_password(password_file)
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, TERMINATION)
+    try:
+        api = _sign_in(url, name=name, password=password, password_file=password_file)
+        try:
+            yield api
+        finally:
+            # Ctrl-C still interrupts the work, but not the sign-out.
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+            api.sign_out()
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+
+
+def _sign_in(url: str, *, name: str, password: str, password_file: Path) -> Jellyfin:
     try:
         answer = as_object(
             Jellyfin(url).request(
@@ -161,25 +176,8 @@ def signed_in(url: str, *, name: str, password_file: Path) -> Generator[Jellyfin
         raise Fatal(f"{e} Check `systemctl status jellyfin.service`.") from None
 
     api = Jellyfin(url, token=text(answer, "AccessToken"))
-    # Termination signals run the sign-out below instead of skipping it. An ignored signal,
-    # as under nohup, stays ignored.
-    termination = _Termination()
-    previous = {
-        s: signal.signal(s, termination)
-        for s in (signal.SIGTERM, signal.SIGHUP)
-        if signal.getsignal(s) == signal.SIG_DFL
-    }
-    try:
-        policy = as_object(as_object(answer.get("User")).get("Policy"))
-        if not flag(policy, "IsAdministrator", default=False):
-            raise Fatal(f"{name} is not an administrator on this server.")
-        yield api
-    finally:
-        termination.deferring = True
-        try:
-            api.sign_out()
-        finally:
-            for s, handler in previous.items():
-                signal.signal(s, handler)
-        if termination.pending is not None:
-            raise SystemExit(128 + termination.pending)
+    policy = as_object(as_object(answer.get("User")).get("Policy"))
+    if not flag(policy, "IsAdministrator", default=False):
+        api.sign_out()
+        raise Fatal(f"{name} is not an administrator on this server.")
+    return api

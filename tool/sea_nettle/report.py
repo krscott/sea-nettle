@@ -231,7 +231,7 @@ def link_attention(entry: Entry, check: LinkCheck) -> list[Attention]:
                 subject=subject,
                 problem=f"the link check could not reach it: {check.message}",
                 fix=f"Check that Jellyfin runs there and that this host can open {entry.url}. "
-                "If the message shows HTTP 401 or 403, the stored key no longer works: open "
+                "If the message shows HTTP 401, the stored key no longer works: open "
                 "the entry under "
                 f"{SERVERS} and, {NEW_TOKEN}. Then run `sea-nettle status` again.",
             )

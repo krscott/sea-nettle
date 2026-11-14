@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import signal
 import socket
 import threading
@@ -15,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from sea_nettle.__main__ import main
-from sea_nettle.jellyfin import Fatal, Jellyfin, signed_in
+from sea_nettle.jellyfin import Fatal, Jellyfin, Unanswered, signed_in
 
 ADMIN = {"AccessToken": "token-1", "User": {"Policy": {"IsAdministrator": True}}}
 CONFIG_PATH = "/Plugins/ebd650b5-6f4c-4ccb-b10d-23dffb3a7286/Configuration"
@@ -113,10 +112,10 @@ def test_starting_jellyfin_gets_the_systemctl_hint(
         sign_in(url, password_file)
 
 
-def test_unanswered_call_is_fatal_without_traceback(stub: tuple[Stub, str]) -> None:
+def test_unanswered_call(stub: tuple[Stub, str]) -> None:
     state, url = stub
     state.delay = 1
-    with pytest.raises(Fatal, match="did not answer GET /System/Info"):
+    with pytest.raises(Unanswered, match="did not answer GET /System/Info"):
         Jellyfin(url, token="t").request("GET", "/System/Info", timeout=0.2)
 
 
@@ -129,47 +128,35 @@ def test_session_ends_after_a_failure(stub: tuple[Stub, str], password_file: Pat
     assert state.calls[-1] == "POST /Sessions/Logout"
 
 
-def test_revoked_token_counts_as_signed_out(stub: tuple[Stub, str], password_file: Path) -> None:
+def test_revoked_token_counts_as_signed_out(
+    stub: tuple[Stub, str], password_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     state, url = stub
     state.answers["POST /Users/AuthenticateByName"] = (200, ADMIN)
-    # A later run's sign-in revoked this run's token.
+    # A later run's sign-in revoked this run's token, or the account was disabled.
     state.answers["POST /Sessions/Logout"] = (401, None)
     with signed_in(url, name="admin", password_file=password_file) as api:
         pass
     assert api.signed_out
+    assert "If the account was disabled" in capsys.readouterr().err
 
 
-@pytest.mark.skipif(
-    signal.getsignal(signal.SIGTERM) != signal.SIG_DFL, reason="SIGTERM is handled already"
-)
-def test_termination_during_sign_out_waits_for_it(
-    stub: tuple[Stub, str], password_file: Path
-) -> None:
+def test_termination_waits_for_sign_out(stub: tuple[Stub, str], password_file: Path) -> None:
     state, url = stub
     state.answers["POST /Users/AuthenticateByName"] = (200, ADMIN)
     state.answers["POST /Sessions/Logout"] = (204, None)
-    state.on_call = lambda call: (
-        os.kill(os.getpid(), signal.SIGTERM) if call == "POST /Sessions/Logout" else None
-    )
-    clients: list[Jellyfin] = []
-    with pytest.raises(SystemExit) as exit_info:
-        with signed_in(url, name="admin", password_file=password_file) as api:
-            clients.append(api)
-    assert exit_info.value.code == 128 + signal.SIGTERM
-    assert clients[0].signed_out
-    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
-
-
-def test_ignored_hangup_stays_ignored(stub: tuple[Stub, str], password_file: Path) -> None:
-    state, url = stub
-    state.answers["POST /Users/AuthenticateByName"] = (200, ADMIN)
-    state.answers["POST /Sessions/Logout"] = (204, None)
-    previous = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    events: list[str] = []
+    state.on_call = events.append
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: events.append("SIGTERM"))
     try:
         with signed_in(url, name="admin", password_file=password_file):
-            assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+            blocked = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            assert {signal.SIGTERM, signal.SIGHUP} <= blocked
+            signal.pthread_kill(threading.get_ident(), signal.SIGTERM)
+        assert events[-2:] == ["POST /Sessions/Logout", "SIGTERM"]
+        assert signal.SIGTERM not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
     finally:
-        signal.signal(signal.SIGHUP, previous)
+        signal.signal(signal.SIGTERM, previous)
 
 
 def run_status(url: str, password_file: Path) -> int:

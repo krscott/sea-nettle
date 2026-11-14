@@ -6,7 +6,7 @@ renew pairing secrets but never changes configuration (R-PAIR-1).
 
 from __future__ import annotations
 
-from .jellyfin import Fatal, HttpStatus, Jellyfin
+from .jellyfin import Jellyfin, Unanswered
 from .model import (
     KEPT_API_KEY,
     SERVER_SYNC_ID,
@@ -66,10 +66,8 @@ def check_link(api: Jellyfin, entry: Entry) -> LinkCheck:
             },
             timeout=CHECK_TIMEOUT,
         )
-    except HttpStatus:
-        # Server Sync reports the peer's problems in its answer, so this one is local.
-        raise
-    except Fatal as e:
-        # A peer that accepts connections but never answers keeps the check open.
-        return LinkCheck.unanswered(f"no answer within {CHECK_TIMEOUT // 60} minutes ({e})")
+    except Unanswered:
+        # Server Sync reports the peer's other problems in its answer; any other failure
+        # is local. A peer that accepts connections but never answers keeps the check open.
+        return LinkCheck.unanswered(f"no answer within {CHECK_TIMEOUT // 60} minutes")
     return LinkCheck.from_json(answer)
