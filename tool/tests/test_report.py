@@ -177,15 +177,23 @@ def test_entry_server_id_differs_from_peer() -> None:
     assert other in item.problem
 
 
-def test_server_id_matches_with_or_without_dashes() -> None:
+def test_server_id_matches_ignoring_case_only() -> None:
+    # Server Sync's FindServerById ignores case but not dashes.
+    assert codes(snapshot(checks={"e1": ok_check(ServerId=SOURCE_ID.upper())})) == []
     dashed = "5c1b0c32-d7d2-4fb2-a8d1-a7c09c8a4f11"
-    assert codes(snapshot(checks={"e1": ok_check(ServerId=dashed)})) == []
+    only(snapshot(checks={"e1": ok_check(ServerId=dashed)}), "entry-server-id-mismatch")
 
 
 def test_unreachable_peer() -> None:
     check = ok_check(Reachable=False, ServerId=None, PeerMode=None, Paired=False, Severity="error")
     item = only(snapshot(checks={"e1": check}), "peer-unreachable")
     assert "https://source" in item.fix
+
+
+def test_link_check_that_never_answers() -> None:
+    check = LinkCheck.unanswered("no answer within 5 minutes (timed out)")
+    item = only(snapshot(checks={"e1": check}), "peer-unreachable")
+    assert "timed out" in item.problem
 
 
 def test_peer_that_does_not_list_this_server() -> None:
@@ -247,12 +255,6 @@ def test_disabled_user_mapping_leaves_user_unmapped() -> None:
         "IsEnabled": False,
     }
     assert codes(snapshot(entry(UserMappings=[disabled]))) == ["unmapped-user"]
-
-
-def test_mode_accepts_names_and_numbers() -> None:
-    assert entry(Mode="Sync").mode == "Sync"
-    assert entry(Mode=1).mode == "Push"
-    assert entry(Mode=None).mode == "Pull"
 
 
 def test_reports_never_carry_api_keys() -> None:

@@ -13,8 +13,6 @@ SERVER_SYNC_ID = "ebd650b5-6f4c-4ccb-b10d-23dffb3a7286"
 PEER_LOGIN_PROVIDER = "Jellyfin.Plugin.PeerLogin.PeerAuthenticationProvider"
 # Server Sync resolves this in place of an API key to the key it stores for the entry.
 KEPT_API_KEY = "__JPK_SECRET_KEPT__"
-# Server Sync's `ServerMode`, in declaration order.
-MODES = ("Pull", "Push", "Sync")
 
 
 def as_object(value: object) -> dict[str, object]:
@@ -54,20 +52,15 @@ def flag(obj: dict[str, object], key: str, *, default: bool) -> bool:
     return value
 
 
-def mode(value: object) -> str:
-    """A `ServerMode`, which Jellyfin's JSON writes by name."""
-    if value is None:
-        return MODES[0]
-    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < len(MODES):
-        return MODES[value]
-    if isinstance(value, str) and value in MODES:
-        return value
-    raise ValueError(f"Mode: unexpected value {value!r}")
-
-
 def same_id(a: str, b: str) -> bool:
-    """Jellyfin and Server Sync write the same GUID with and without dashes."""
+    """Jellyfin and Server Sync write the same user, library, or plugin GUID with and
+    without dashes."""
     return normalize_id(a) == normalize_id(b)
+
+
+def server_id_key(value: str) -> str:
+    """Server Sync matches server IDs ignoring case only (`FindServerById`)."""
+    return value.lower()
 
 
 def normalize_id(value: str) -> str:
@@ -93,7 +86,6 @@ class LibraryMapping:
     source_name: str
     local_id: str
     local_name: str
-    enabled: bool
 
     @staticmethod
     def from_json(value: object) -> LibraryMapping:
@@ -102,7 +94,6 @@ class LibraryMapping:
             source_name=text(obj, "SourceLibraryName"),
             local_id=text(obj, "LocalLibraryId"),
             local_name=text(obj, "LocalLibraryName"),
-            enabled=flag(obj, "IsEnabled", default=True),
         )
 
 
@@ -155,7 +146,8 @@ class Entry:
             url=url,
             has_api_key=bool(text(obj, "ApiKey")),
             allow_private_network=flag(obj, "AllowPrivateNetwork", default=True),
-            mode=mode(obj.get("Mode")),
+            # Passed through to the link check, which reads it the same way Server Sync does.
+            mode=text(obj, "Mode"),
             server_id=text(obj, "ServerId"),
             enabled=flag(obj, "IsEnabled", default=True),
             access_level=text(obj, "AccessLevel"),
@@ -212,4 +204,16 @@ class LinkCheck:
             pairing_error=optional_text(obj, "PairingError"),
             severity=text(obj, "Severity"),
             message=text(obj, "Message"),
+        )
+
+    @staticmethod
+    def unanswered(message: str) -> LinkCheck:
+        return LinkCheck(
+            reachable=False,
+            server_id="",
+            peer_mode=None,
+            paired=False,
+            pairing_error=None,
+            severity="error",
+            message=message,
         )

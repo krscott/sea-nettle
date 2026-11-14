@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
-from .model import Entry, LinkCheck, Plugin, User, normalize_id, same_id
+from .model import Entry, LinkCheck, Plugin, User, normalize_id, same_id, server_id_key
 
 SERVERS = "Dashboard > Server Sync > Servers"
 WHITELIST = "Dashboard > Server Sync > Settings > Whitelist"
 RERUN = "then run `sea-nettle status` again"
+# Controls in step 2 Authentication of an entry under SERVERS.
+RECORD_ID = (
+    "in step 2 Authentication, click Test Connection, then Save Server at the bottom of the entry"
+)
+NEW_TOKEN = "in step 2 Authentication, choose Sign In and click Generate Token"
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -117,8 +122,8 @@ def plugin_attention(plugin: Plugin | None, *, expected_version: str) -> list[At
                 code="server-sync-missing",
                 subject="Server Sync",
                 problem="the plugin is not installed.",
-                fix="Import sea-nettle's server-sync module (replica includes it), "
-                "rebuild, and restart jellyfin.service.",
+                fix="Restart jellyfin.service, which installs the pinned plugin, and check "
+                "its journal if the plugin is still missing.",
             )
         ]
     items: list[Attention] = []
@@ -146,11 +151,11 @@ def plugin_attention(plugin: Plugin | None, *, expected_version: str) -> list[At
 
 
 def duplicate_server_ids(entries: tuple[Entry, ...]) -> list[Attention]:
-    """Server Sync matches callers by server ID and only ever uses the first entry."""
+    """Server Sync finds the entry for a peer's calls by server ID, and takes the first."""
     items: list[Attention] = []
     first: dict[str, Entry] = {}
     for entry in entries:
-        server_id = normalize_id(entry.server_id)
+        server_id = server_id_key(entry.server_id)
         if not server_id:
             continue
         if server_id not in first:
@@ -160,8 +165,9 @@ def duplicate_server_ids(entries: tuple[Entry, ...]) -> list[Attention]:
             Attention(
                 code="entry-duplicate-server-id",
                 subject=f"Peer {entry.name}",
-                problem=f"it records the same server ID as {first[server_id].name}, "
-                "so Server Sync never uses it.",
+                problem=f"it records the same server ID as {first[server_id].name}, and "
+                "Server Sync matches that server's calls only to the first, so this entry "
+                "cannot pair or take changes from it.",
                 fix=f"Delete one of the two entries under {SERVERS}.",
             )
         )
@@ -178,7 +184,9 @@ def entry_attention(entry: Entry, check: LinkCheck | None) -> list[Attention]:
                 code="entry-incomplete",
                 subject=subject,
                 problem="its entry has no URL or no key, so Server Sync skips it.",
-                fix=f"Open the entry under {SERVERS}, enter the URL, and sign in.",
+                fix=f"Open the entry under {SERVERS}, enter the URL, and in step 2 "
+                "Authentication enter an API key, or choose Sign In and click Generate Token; "
+                "then click Save Server.",
             )
         ]
     items: list[Attention] = []
@@ -189,19 +197,23 @@ def entry_attention(entry: Entry, check: LinkCheck | None) -> list[Attention]:
                 subject=subject,
                 problem="its entry records no server ID, so the peer cannot pair "
                 "with this server or send it changes.",
-                fix=f"Open the entry under {SERVERS} and sign in again, "
-                f"which records the ID; {RERUN}.",
+                fix=f"Open the entry under {SERVERS} and, {RECORD_ID}, which records the ID; "
+                f"{RERUN}.",
             )
         )
-    elif check is not None and check.server_id and not same_id(check.server_id, entry.server_id):
+    elif (
+        check is not None
+        and check.server_id
+        and server_id_key(check.server_id) != server_id_key(entry.server_id)
+    ):
         items.append(
             Attention(
                 code="entry-server-id-mismatch",
                 subject=subject,
                 problem=f"its entry records server ID {entry.server_id}, but the server "
                 f"at {entry.url} reports {check.server_id}.",
-                fix=f"If {entry.url} is the right server, open the entry under {SERVERS} "
-                f"and sign in again; otherwise correct the URL; {RERUN}.",
+                fix=f"If {entry.url} is the right server, open the entry under {SERVERS} and, "
+                f"{RECORD_ID}; otherwise correct the URL; {RERUN}.",
             )
         )
     if check is not None:
@@ -218,8 +230,10 @@ def link_attention(entry: Entry, check: LinkCheck) -> list[Attention]:
                 code="peer-unreachable",
                 subject=subject,
                 problem=f"the link check could not reach it: {check.message}",
-                fix=f"Check that Jellyfin runs there and that this host can open {entry.url}; "
-                f"{RERUN}.",
+                fix=f"Check that Jellyfin runs there and that this host can open {entry.url}. "
+                "If the message shows HTTP 401 or 403, the stored key no longer works: open "
+                "the entry under "
+                f"{SERVERS} and, {NEW_TOKEN}. Then run `sea-nettle status` again.",
             )
         ]
     if check.peer_mode is None:
@@ -227,11 +241,13 @@ def link_attention(entry: Entry, check: LinkCheck) -> list[Attention]:
             Attention(
                 code="peer-not-listed",
                 subject=subject,
-                problem=f"it does not list this server, or refused to say: {check.message}",
-                fix=f"On {entry.name}, add this server under {SERVERS} and sign in from "
-                f"that entry. On each server, allow the other's key user under {WHITELIST} "
-                "with no locations: peer calls reach Jellyfin through the local proxy, "
-                "so they come from 127.0.0.1. Then run `sea-nettle status` again.",
+                problem="the link check could not confirm that it lists this server: "
+                f"{check.message}",
+                fix="Follow the link check's message. Usually: on "
+                f"{entry.name}, add this server under {SERVERS} and, {NEW_TOKEN}; "
+                f"and on each server, allow the other's key user under {WHITELIST} with no "
+                "locations, because peer calls reach Jellyfin through the local proxy and "
+                "come from 127.0.0.1. Then run `sea-nettle status` again on both servers.",
             )
         ]
     if not check.paired:
@@ -297,8 +313,8 @@ def mapping_attention(
                     problem=f"it maps {user.source_name} to {user.local_name}, but its key "
                     f"belongs to the standard user {entry.authenticated_user}, so Server "
                     "Sync syncs only that user's history and settings.",
-                    fix=f"Sign in from the entry under {SERVERS} with an administrator "
-                    "on that server, or remove the mapping.",
+                    fix=f"Open the entry under {SERVERS} and, {NEW_TOKEN} with an "
+                    "administrator on that server; or remove the mapping.",
                 )
             )
     return items

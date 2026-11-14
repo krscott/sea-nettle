@@ -129,11 +129,12 @@ next to the media; Jellyfin cannot write there.
    It is a local account; keep it separate from source accounts.
 2. Create a library at `${dataDir}/replica` (by default
    `/var/lib/jellyfin/replica`).
-3. In Server Sync, add the source's HTTPS URL, sign in, and map the source
-   library to the replica library with **Storage = Link**. Start with a small
-   whitelist. Non-video items in a Link mapping are copied, not linked.
-4. On the source, add the replica in Server Sync, allow linking, and grant only
-   the peer permissions you need.
+3. In Server Sync, add the source's HTTPS URL with **Direction = Pull**, sign
+   in, and map the source library to the replica library with
+   **Storage = Link**. Start by setting the mapping's **Library Filter** to
+   Whitelist with a few items. Non-video items in a Link mapping are copied, not linked.
+4. On the source, add the replica in Server Sync with **Direction = Push**,
+   allow linking, and grant only the peer permissions you need.
 5. On each server, allow the key user of the other server's entry under
    **Server Sync > Settings > Whitelist** with no locations. Peer calls reach
    Jellyfin through the local HTTPS proxy, so they all come from 127.0.0.1 and

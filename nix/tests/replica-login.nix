@@ -433,8 +433,11 @@ in
         add_peer(source, source_admin, "replica", "https://replica", "source-sync", "Push")
         assert attention(source, source_admin, 0) == []
         assert attention(replica, replica_admin, 3) == ["unmapped-user"] * 3
+        # Each direction logs one message on each side.
         for machine in [source, replica]:
-            machine.succeed("journalctl -b -u jellyfin.service | grep -F 'Paired with'")
+            journal = machine.succeed("journalctl -b -u jellyfin.service")
+            assert "it issued the secret this server presents to it" in journal
+            assert "it now presents a secret this server issued" in journal
 
     with subtest("R-PAIR-4: status passes once Peer Login users are mapped"):
         api(source, "POST", "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=/srv/media", {}, token=source_admin, expect=204)

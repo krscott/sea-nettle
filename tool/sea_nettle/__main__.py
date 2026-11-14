@@ -55,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     report = build(snapshot, expected_version=args.server_sync_version)
     sys.stdout.write(report.to_json() + "\n" if args.json else report.to_text())
+    if not api.signed_out:
+        # R-PAIR-3; signed_in has said how to end the session.
+        return 1
     return NEEDS_ATTENTION if report.attention else 0
 
 

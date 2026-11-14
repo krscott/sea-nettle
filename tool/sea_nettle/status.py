@@ -1,12 +1,12 @@
 """`sea-nettle status`: reads this server's Server Sync setup and runs its link checks.
 
-Every call reads, except Server Sync's link check, which can renew pairing secrets but
-never changes configuration (R-PAIR-1).
+Apart from its own session, every call reads, except Server Sync's link check, which can
+renew pairing secrets but never changes configuration (R-PAIR-1).
 """
 
 from __future__ import annotations
 
-from .jellyfin import Jellyfin
+from .jellyfin import Fatal, HttpStatus, Jellyfin
 from .model import (
     KEPT_API_KEY,
     SERVER_SYNC_ID,
@@ -21,8 +21,9 @@ from .model import (
 )
 from .report import Snapshot, checked_entries
 
-# The link check waits on the peer, which may wait on a callback to this server.
-CHECK_TIMEOUT = 120
+# The link check makes several calls to the peer, and the peer calls this server back.
+# A check still open after this long reports the peer as unreachable.
+CHECK_TIMEOUT = 300
 
 
 def collect(api: Jellyfin) -> Snapshot:
@@ -52,16 +53,23 @@ def check_link(api: Jellyfin, entry: Entry) -> LinkCheck:
     The kept-key placeholder makes Server Sync use the key it stores for the entry with
     this key, and only at its saved URL, so this command never handles the key.
     """
-    answer = api.request(
-        "POST",
-        "/Sync/Hints/CheckPeer",
-        {
-            "ServerUrl": entry.url,
-            "ApiKey": KEPT_API_KEY,
-            "ServerKey": entry.key,
-            "AllowPrivateNetwork": entry.allow_private_network,
-            "Mode": entry.mode,
-        },
-        timeout=CHECK_TIMEOUT,
-    )
+    try:
+        answer = api.request(
+            "POST",
+            "/Sync/Hints/CheckPeer",
+            {
+                "ServerUrl": entry.url,
+                "ApiKey": KEPT_API_KEY,
+                "ServerKey": entry.key,
+                "AllowPrivateNetwork": entry.allow_private_network,
+                "Mode": entry.mode,
+            },
+            timeout=CHECK_TIMEOUT,
+        )
+    except HttpStatus:
+        # Server Sync reports the peer's problems in its answer, so this one is local.
+        raise
+    except Fatal as e:
+        # A peer that accepts connections but never answers keeps the check open.
+        return LinkCheck.unanswered(f"no answer within {CHECK_TIMEOUT // 60} minutes ({e})")
     return LinkCheck.from_json(answer)

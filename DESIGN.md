@@ -251,8 +251,12 @@ Python with no dependencies outside the standard library.
 
 It signs in to Jellyfin's loopback URL as the initial administrator, with the
 password read from `initialAdmin.passwordFile` (R-PAIR-2), and signs out when
-it finishes, even after a failure (R-PAIR-3). It signs in with a fixed device
-ID, so a run that could not sign out has its token revoked by the next one.
+it finishes, even after a failure or on SIGTERM or SIGHUP (R-PAIR-3). If the
+sign-out fails, it says how to remove the session and exits 1. It signs in
+with a fixed device ID, so a successful sign-in revokes the token of an
+earlier run that could not sign out, or of a run still going on the same host;
+a 401 at sign-out therefore counts as signed out. Termination signals that
+arrive during the sign-out wait for it.
 Signing in updates the account's sign-in bookkeeping, as any sign-in does: its
 last login date, and its failed-attempt count, which a failed sign-in raises
 and a successful one resets. These are not configuration (R-PAIR-1).
@@ -279,14 +283,14 @@ what the command read:
 
 | Code | Condition |
 | --- | --- |
-| `server-sync-missing`, `server-sync-inactive` | No active Server Sync; nothing else is assessed |
+| `server-sync-missing`, `server-sync-inactive` | No active Server Sync; its configuration is not assessed |
 | `server-sync-version` | The loaded version differs from the pin |
 | `no-peers` | No peer entries |
-| `entry-duplicate-server-id` | Two entries record one server ID; Server Sync uses only the first |
+| `entry-duplicate-server-id` | Two entries record one server ID; Server Sync matches that peer's calls only to the first |
 | `entry-incomplete` | An enabled entry lacks a URL or key |
 | `entry-no-server-id` | No recorded server ID; pairing callbacks find entries by it |
-| `entry-server-id-mismatch` | The recorded ID differs from the one the peer reports |
-| `peer-unreachable`, `peer-not-listed`, `peer-unpaired`, `peer-link-warning` | The link check's first problem, in that order |
+| `entry-server-id-mismatch` | The recorded ID differs, ignoring case as Server Sync does, from the one the peer reports |
+| `peer-unreachable`, `peer-not-listed`, `peer-unpaired`, `peer-link-warning` | The link check's first problem, in that order; a check with no answer within 5 minutes counts as unreachable |
 | `mapping-missing-library`, `mapping-missing-user` | A mapping names a local library or user that no longer exists |
 | `user-mapping-skipped` | A standard user's key with mappings for other users, which Server Sync skips |
 | `unmapped-user` | A Peer Login user without an enabled user mapping |

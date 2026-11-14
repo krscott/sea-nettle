@@ -8,6 +8,8 @@
 
 let
   cfg = config.sea-nettle.jellyfin;
+  # The flake's `checks.tool` runs the tests; hosts need not build pyright.
+  tool = (pkgs.callPackage ../../tool/package.nix { }).overridePythonAttrs { doCheck = false; };
   version = "12.2.11.4";
   archive = pkgs.fetchurl {
     url = "https://github.com/JPKribs/jellyfin-plugin-serversync/releases/download/v${version}/jellyfin-plugin-serversync-${version}.zip";
@@ -40,7 +42,7 @@ in
     (pkgs.writeShellApplication {
       name = "sea-nettle";
       text = ''
-        exec ${lib.getExe (pkgs.callPackage ../../tool/package.nix { })} ${
+        exec ${lib.getExe tool} ${
           lib.escapeShellArgs [
             "--url"
             cfg.localUrl
