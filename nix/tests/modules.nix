@@ -85,7 +85,7 @@ let
       { services.jellyfin.openFirewall = true; }
     ]) "keeps Jellyfin's own ports closed";
 
-    # R-SERVER-1
+    # R-SERVER-1, R-SERVER-2
     "network configuration binds localhost" =
       let
         seeded = (tmpfiles source)."${source.services.jellyfin.configDir}/network.xml".C.argument;

@@ -89,7 +89,7 @@ pkgs.runCommand "script-tests"
     install_plugin "$dir" ${payload "1.1.0.0"} 2>/dev/null
     jq -e '.version == "1.1.0.0" and .status == "Active"' "$meta"
 
-    # R-SERVER-1: only a localhost-bound configuration starts.
+    # R-SERVER-1, R-SERVER-2: only a localhost-bound configuration starts.
     check_network ${network "${localhost}${port}${off}"}
     for bad in \
       ${network "${localhost}${port}"} \

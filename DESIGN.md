@@ -177,9 +177,10 @@ Funnel uses, and on stop removes only its own handler.
 ### `jellyfin-plugins`
 
 `plugins` maps a plugin directory name to a payload directory (assemblies and
-`meta.json`), keyed by the plugin's manifest name; the script refuses any other
-key, because Jellyfin matches plugin copies by name and the script deletes
-files. Before every start, `install-plugin.sh` makes
+`meta.json`), keyed by the plugin's manifest name; the script refuses any other key. Catalog
+installs go to `<manifest name>_<version>`, so the cleanup below finds them
+only under that key, and the check keeps deletions inside the plugin's own
+directory. Before every start, `install-plugin.sh` makes
 `${dataDir}/plugins/<name>` hold exactly the payload's files and rewrites
 `meta.json` from the payload with `autoUpdate = false` (R-SERVER-3). It also
 deletes `<name>_<version>` directories, where a dashboard catalog install would

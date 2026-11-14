@@ -6,8 +6,8 @@ set -euo pipefail
 plugin_dir=$1
 payload=$2
 
-# Jellyfin matches plugin copies by manifest name, and this script deletes files, so the
-# directory must be named after the plugin.
+# Catalog installs go to "<manifest name>_<version>", so the cleanup below finds them only if
+# the directory carries the manifest name; the check also keeps deletions inside this plugin.
 name=$(jq -r .name "$payload/meta.json")
 if [[ ${plugin_dir##*/} != "$name" ]]; then
     echo "Plugin directory '${plugin_dir##*/}' must match the plugin's manifest name '$name'." >&2
