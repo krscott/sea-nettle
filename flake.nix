@@ -23,6 +23,7 @@
 
       packages = forAllSystems (pkgs: rec {
         jellyfin-plugin-peer-login = pkgs.callPackage ./plugin/package.nix { };
+        sea-nettle = pkgs.callPackage ./tool/package.nix { };
         default = jellyfin-plugin-peer-login;
       });
 
@@ -30,6 +31,8 @@
       checks = forAllSystems (pkgs: {
         # Building the plugin runs its unit tests.
         plugin = self.packages.${pkgs.stdenv.hostPlatform.system}.jellyfin-plugin-peer-login;
+        # Building the tool runs its unit tests and type checks.
+        tool = self.packages.${pkgs.stdenv.hostPlatform.system}.sea-nettle;
         modules = import ./nix/tests/modules.nix { inherit nixpkgs pkgs; };
         scripts = import ./nix/tests/scripts.nix { inherit pkgs; };
       });
@@ -43,9 +46,16 @@
         default = pkgs.mkShell {
           packages = with pkgs; [
             bash
+            black
             dotnetCorePackages.sdk_10_0
+            isort
             just
             nixfmt
+            pyright
+            (python3.withPackages (ps: [
+              ps.mypy
+              ps.pytest
+            ]))
             shellcheck
             shfmt
           ];

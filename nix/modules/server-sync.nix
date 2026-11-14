@@ -7,6 +7,7 @@
 }:
 
 let
+  cfg = config.sea-nettle.jellyfin;
   version = "12.2.11.4";
   archive = pkgs.fetchurl {
     url = "https://github.com/JPKribs/jellyfin-plugin-serversync/releases/download/v${version}/jellyfin-plugin-serversync-${version}.zip";
@@ -20,7 +21,10 @@ let
       '';
 in
 {
-  imports = [ ./jellyfin-plugins.nix ];
+  imports = [
+    ./jellyfin.nix
+    ./jellyfin-plugins.nix
+  ];
 
   assertions = [
     {
@@ -30,4 +34,25 @@ in
   ];
 
   sea-nettle.jellyfin.plugins."Server Sync" = payload;
+
+  # Passes only the password file's path; the tool reads the file at runtime (R-PAIR-2).
+  environment.systemPackages = [
+    (pkgs.writeShellApplication {
+      name = "sea-nettle";
+      text = ''
+        exec ${lib.getExe (pkgs.callPackage ../../tool/package.nix { })} ${
+          lib.escapeShellArgs [
+            "--url"
+            cfg.localUrl
+            "--admin-name"
+            cfg.initialAdmin.name
+            "--password-file"
+            cfg.initialAdmin.passwordFile
+            "--server-sync-version"
+            version
+          ]
+        } "$@"
+      '';
+    })
+  ];
 }

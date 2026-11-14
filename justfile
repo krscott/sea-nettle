@@ -26,6 +26,7 @@ _format mode *files:
 
     declare -a files=()
     declare -a cs_files=()
+    declare -a py_files=()
     mode="$1"
     shift
 
@@ -65,8 +66,21 @@ _format mode *files:
             *.cs)
                 cs_files+=("$file")
             ;;
+            *.py)
+                py_files+=("$file")
+            ;;
         esac
     done
+
+    if ((${#py_files[@]} > 0)); then
+        declare -a check=()
+        if [[ "$mode" == check ]]; then
+            check=(--check)
+        fi
+        # Both read their settings from tool/pyproject.toml.
+        isort "${check[@]}" --settings-path tool "${py_files[@]}"
+        black "${check[@]}" --config tool/pyproject.toml "${py_files[@]}"
+    fi
 
     if ((${#cs_files[@]} > 0)); then
         declare -a verify=()

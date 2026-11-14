@@ -103,6 +103,14 @@ in
       example = 8445;
       description = "Tailnet HTTPS port that Tailscale Serve proxies to Jellyfin, or null for no HTTPS endpoint.";
     };
+
+    localUrl = lib.mkOption {
+      type = lib.types.str;
+      default = upstream;
+      readOnly = true;
+      internal = true;
+      description = "Jellyfin's loopback HTTP URL, for local tools.";
+    };
   };
 
   config = {

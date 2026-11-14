@@ -132,3 +132,38 @@ do not migrate or backfill unrelated requirements.
   so the tailnet must never reach an unclaimed server. The administrator then
   manages the account in the dashboard, and a rebuild must not revert those
   changes.
+
+## Setup commands (PAIR)
+
+- **R-PAIR-1** [test] `sea-nettle status` never changes Jellyfin or Server Sync
+  configuration.
+
+  Rationale: Operators run it to diagnose a live pair, often while something is
+  already wrong. A diagnostic that edits peer entries, mappings, grants, users,
+  or libraries could make a problem worse or undo dashboard work. Its link
+  checks can renew pairing secrets. That is Server Sync's own repair path, and
+  pairing secrets are not configuration.
+
+- **R-PAIR-2** [test] The `sea-nettle` commands read credentials only from
+  files. They never write passwords, access tokens, API keys, or pairing secrets
+  to their output, logs, command lines, or the Nix store.
+
+  Rationale: Reports get pasted into issues and chats. Command lines are visible
+  to every local user. The Nix store is world-readable.
+
+- **R-PAIR-3** [test] The `sea-nettle` commands end every Jellyfin session they
+  open before they exit.
+
+  Rationale: The commands sign in as an administrator. A token left behind stays
+  valid until someone revokes it, and each one shows up as a device in the
+  dashboard.
+
+- **R-PAIR-4** [test] `sea-nettle status` reports each of the following, with
+  how to fix it, and exits with a distinct status when it reports any of them:
+  - a peer that is unreachable, unpaired, or does not list this server;
+  - a peer entry whose server ID is missing or doesn't match the peer;
+  - a Peer Login user without a user mapping.
+
+  Rationale: Otherwise these problems are silent. Content, history, and links
+  stop flowing, and nothing points at the cause. The exit status lets scripts
+  and tests gate on a healthy pair.
