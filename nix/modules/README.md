@@ -94,9 +94,10 @@ did not finish starting within 5 minutes.
 If the unit reports that Jellyfin's first user already has a password, setup
 was interrupted or someone else claimed the server first. If
 `journalctl -u jellyfin-initial-admin` shows that an earlier run logged
-`Set the password for <name>`, or could not reach Jellyfin for
-`POST /Startup/User`, that run set it: restart `jellyfin.service`, which then
-completes the wizard, and start the units again. Otherwise, stop Jellyfin, delete its data directory
+`Set the password for <name>`, that run set it: restart `jellyfin.service`,
+which then completes the wizard, and start the units again. Otherwise, even if
+an earlier run could not reach Jellyfin, treat the server as claimed by
+someone else: stop Jellyfin, delete its data directory
 (`/var/lib/jellyfin` by default), run `systemd-tmpfiles --create` to recreate
 it with the seeded configuration, and start the units again.
 

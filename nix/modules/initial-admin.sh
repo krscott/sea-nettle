@@ -51,10 +51,10 @@ if wizard_complete; then
     exit 0
 fi
 
-# While Jellyfin starts, a setup server answers 503 to most requests, but claims the wizard is
-# incomplete on /System/Info/Public; the full server then answers 503 until its startup
-# completes. Wait for an endpoint that only the started server answers.
-request GET /Branding/Configuration --retry 150 --retry-delay 2 --retry-connrefused --retry-max-time 300
+# Wait until Jellyfin has finished starting, which may complete the wizard. Until then it
+# refuses connections, drops them while its setup server hands over, or answers 503 on API
+# endpoints such as this one.
+request GET /Branding/Configuration --retry 150 --retry-delay 2 --retry-all-errors --retry-max-time 300
 if [[ $status == 503 ]]; then
     fatal "Jellyfin did not finish starting within 5 minutes. Once it has, start" \
         "jellyfin-serve.service, or jellyfin-initial-admin.service without servePort."
@@ -64,7 +64,7 @@ expect 200
 # Jellyfin's startup completes the wizard, and saves system.xml, before the request above
 # succeeds if an administrator with a password exists.
 if wizard_complete; then
-    echo "Jellyfin completed the startup wizard while starting; leaving users unchanged."
+    echo "system.xml now marks the startup wizard complete; leaving users unchanged."
     exit 0
 fi
 

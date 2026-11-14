@@ -171,10 +171,12 @@ in
         assert "first user already has a password" in admin_log(source)
         assert not wizard_completed(source)
         assert unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic") == 0
-        restart_jellyfin(source)
+        # The unit reads system.xml before Jellyfin's startup completes the wizard.
+        source.succeed("systemctl restart jellyfin.service jellyfin-initial-admin.service")
+        wait_for_jellyfin(source)
         assert wizard_completed(source)
+        assert "system.xml now marks the startup wizard complete" in admin_log(source)
         source.succeed("systemctl start jellyfin-serve.service")
-        assert "system.xml marks the startup wizard complete" in admin_log(source)
         source_admin = sign_in(source, "source-admin", "admin-pw")
 
     with subtest("R-SERVER-6: a new server gets the configured administrator"):
@@ -193,7 +195,7 @@ in
         admin_done = unit_time(source, "jellyfin-initial-admin.service", "ActiveEnterTimestampMonotonic")
         serve_start = unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic")
         assert serve_before < jellyfin_start < admin_done <= serve_start, (serve_before, jellyfin_start, admin_done, serve_start)
-        assert admin_log(source).count("system.xml marks the startup wizard complete") >= 2
+        assert "system.xml marks the startup wizard complete" in admin_log(source)
         source_admin = sign_in(source, "source-admin", "admin-pw")
 
     alice = api(source, "POST", "/Users/New", {"Name": "Alice", "Password": "alice-1"}, token=source_admin)
