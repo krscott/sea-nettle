@@ -4,7 +4,7 @@
 let
   inherit (nixpkgs) lib;
 
-  eval =
+  evalBare =
     modules:
     (lib.nixosSystem {
       inherit (pkgs.stdenv.hostPlatform) system;
@@ -20,6 +20,28 @@ let
       ]
       ++ modules;
     }).config;
+
+  eval =
+    modules:
+    evalBare (
+      [
+        {
+          sea-nettle.jellyfin.initialAdmin = {
+            name = "admin";
+            passwordFile = "/run/secrets/jellyfin-admin";
+          };
+        }
+      ]
+      ++ modules
+    );
+
+  # Whether the unit that creates the initial administrator evaluates.
+  initialAdminEvaluates =
+    config:
+    let
+      admin = config.systemd.services.jellyfin-initial-admin.serviceConfig;
+    in
+    (builtins.tryEval (builtins.seq admin.ExecStart admin.LoadCredential)).success;
 
   failedAssertions = config: map (a: a.message) (lib.filter (a: !a.assertion) config.assertions);
   assertionsPass = config: failedAssertions config == [ ];
@@ -127,6 +149,48 @@ let
       && lib.hasInfix "--https=8445 --set-path=/ off" (readScript serve.ExecStop)
       && serve.RestartPreventExitStatus == [ 3 ]
       && !(replica.systemd.services ? jellyfin-serve);
+
+    # R-SERVER-6
+    "Serve opens only after the initial administrator exists" =
+      let
+        serve = source.systemd.services.jellyfin-serve;
+      in
+      lib.elem "jellyfin-initial-admin.service" serve.requires
+      && lib.elem "jellyfin-initial-admin.service" serve.after;
+
+    # R-SERVER-6
+    "the initial administrator is created after Jellyfin starts" =
+      lib.all
+        (
+          config:
+          let
+            admin = config.systemd.services.jellyfin-initial-admin;
+          in
+          lib.elem "multi-user.target" admin.wantedBy
+          && lib.elem "jellyfin.service" admin.requires
+          && lib.elem "jellyfin.service" admin.after
+          && admin.serviceConfig.Type == "oneshot"
+          && admin.serviceConfig.RemainAfterExit
+          && admin.serviceConfig.User == config.services.jellyfin.user
+          && admin.serviceConfig.ProtectSystem == "strict"
+        )
+        [
+          source
+          replica
+        ];
+
+    # R-SERVER-6
+    "the initial administrator is required" =
+      initialAdminEvaluates source && !initialAdminEvaluates (evalBare [ ../modules/jellyfin.nix ]);
+
+    # R-SERVER-6
+    "the password file is read at runtime, outside the Nix store" =
+      source.systemd.services.jellyfin-initial-admin.serviceConfig.LoadCredential
+      == "password:/run/secrets/jellyfin-admin"
+      && !initialAdminEvaluates (eval [
+        ../modules/jellyfin.nix
+        { sea-nettle.jellyfin.initialAdmin.passwordFile = lib.mkForce "${pkgs.writeText "pw" "secret"}"; }
+      ]);
 
     "Serve without Tailscale fails evaluation" = assertionFails (eval [
       ../modules/jellyfin.nix

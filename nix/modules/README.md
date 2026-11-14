@@ -4,7 +4,7 @@ Import the modules from the flake's `nixosModules`:
 
 | Module | Purpose |
 | --- | --- |
-| `jellyfin` | Sandboxed Jellyfin on localhost, an optional read-only media directory, and an optional Tailscale Serve HTTPS endpoint |
+| `jellyfin` | Sandboxed Jellyfin on localhost with its initial administrator, an optional read-only media directory, and an optional Tailscale Serve HTTPS endpoint |
 | `jellyfin-plugins` | Installs Nix-pinned plugin payloads before every start |
 | `server-sync` | Pinned [Server Sync](https://github.com/JPKribs/jellyfin-plugin-serversync) release |
 | `replica` | A replica: `jellyfin`, `server-sync`, the Peer Login plugin, and seeded link-cache settings |
@@ -18,6 +18,10 @@ imports `replica`.
   imports = [ sea-nettle.nixosModules.jellyfin sea-nettle.nixosModules.server-sync ];
   services.tailscale.enable = true;
   sea-nettle.jellyfin = {
+    initialAdmin = {
+      name = "admin";
+      passwordFile = "/run/secrets/jellyfin-admin";
+    };
     mediaDirectory = "/srv/media";
     servePort = 8445;
   };
@@ -28,6 +32,10 @@ imports `replica`.
   imports = [ sea-nettle.nixosModules.replica ];
   services.tailscale.enable = true;
   sea-nettle.jellyfin = {
+    initialAdmin = {
+      name = "admin";
+      passwordFile = "/run/secrets/jellyfin-admin";
+    };
     servePort = 8445;
     replica.sourceUrl = "https://source.example.ts.net:8445";
   };
@@ -59,6 +67,40 @@ uses the port, it fails without retrying; reconcile the conflict, then restart
 `jellyfin-serve`. Tailnet policy decides who can reach the port; Jellyfin still
 requires its own sign-in.
 
+## Initial administrator
+
+`sea-nettle.jellyfin.initialAdmin` is required. On a new server,
+`jellyfin-initial-admin` creates this administrator and completes Jellyfin's
+setup wizard as soon as Jellyfin starts. `jellyfin-serve` starts only after it
+succeeds, because until then anyone who reaches Jellyfin can claim it. Local
+processes can still reach it in the few seconds between Jellyfin's start and
+the claim.
+
+`passwordFile` is a runtime path outside the Nix store, such as a sops-nix or
+agenix secret; it can be readable by root only. Trailing newlines in it are
+ignored, and Jellyfin refuses an empty password. The password never reaches
+the Nix store, command lines, or the journal.
+
+Setup runs once. When the wizard is complete, the unit does nothing, so later
+changes to `name` or the password file have no effect; manage the account in
+the dashboard. Keep the file in place anyway: the unit loads it on every boot.
+Without it, the journal shows
+`jellyfin-initial-admin.service: Failed to set up credentials: No such file or directory`,
+and `jellyfin-serve` stays down. Restore the file, then run
+`systemctl start jellyfin-serve`, or `systemctl start jellyfin-initial-admin`
+without `servePort`. Use the same command if the unit reports that Jellyfin
+did not finish starting within 5 minutes.
+
+If the unit reports that Jellyfin's first user already has a password, setup
+was interrupted or someone else claimed the server first. If
+`journalctl -u jellyfin-initial-admin` shows that an earlier run logged
+`Set the password for <name>`, that run set it: restart `jellyfin.service`,
+which then completes the wizard, and start the units again. Otherwise, even if
+an earlier run could not reach Jellyfin, treat the server as claimed by
+someone else: stop Jellyfin, delete its data directory
+(`/var/lib/jellyfin` by default), run `systemd-tmpfiles --create` to recreate
+it with the seeded configuration, and start the units again.
+
 ## Plugins
 
 Plugins are keyed by their manifest name, such as `"Server Sync"`. Each start
@@ -76,15 +118,15 @@ Jellyfin compatibility. The modules assert the supported Jellyfin version.
 
 ### Source
 
-Open the source's HTTPS endpoint and complete the setup wizard. Create the
-administrator account and ordinary user accounts. Add the media libraries under
+Open the source's HTTPS endpoint and sign in as the initial administrator.
+Create ordinary user accounts. Add the media libraries under
 the media directory. Disable saving artwork, NFO files, subtitles, and trickplay
 next to the media; Jellyfin cannot write there.
 
 ### Replica
 
-1. Open the replica's HTTPS endpoint and complete the setup wizard. Its
-   administrator is a local account; keep it separate from source accounts.
+1. Open the replica's HTTPS endpoint and sign in as the initial administrator.
+   It is a local account; keep it separate from source accounts.
 2. Create a library at `${dataDir}/replica` (by default
    `/var/lib/jellyfin/replica`).
 3. In Server Sync, add the source's HTTPS URL, sign in, and map the source
@@ -140,7 +182,7 @@ loopback addresses; otherwise every Peer Login sign-in is refused.
   later sign-ins that reach the source. Their replica sessions and cached
   password stay valid, so disable or delete the replica user as well.
 - **Local accounts:** a replica account that uses another provider, such as the
-  setup-wizard administrator, never accepts source credentials, even if a
+  initial administrator, never accepts source credentials, even if a
   source user has the same name.
 
 Each sign-in opens a source session and the replica ends it immediately. If the

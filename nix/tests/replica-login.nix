@@ -14,38 +14,57 @@ let
     virtualisation.diskSize = 4096;
     virtualisation.memorySize = 2048;
     environment.systemPackages = [ pkgs.util-linux ];
+    # The test writes the password at runtime, so it never reaches the Nix store (R-SERVER-6).
+    sea-nettle.jellyfin.initialAdmin.passwordFile = "/run/jellyfin-admin-password";
   };
 in
 {
   name = "replica-login";
 
-  nodes.source = {
-    imports = [
-      server
-      ../modules/jellyfin.nix
-      ../modules/server-sync.nix
-    ];
-    sea-nettle.jellyfin.mediaDirectory = "/srv/media";
-    systemd.tmpfiles.rules = [ "d /srv/media 0755 root root -" ];
-
-    services.nginx = {
-      enable = true;
-      virtualHosts.source = {
-        onlySSL = true;
-        sslCertificate = "${certs}/source.crt";
-        sslCertificateKey = "${certs}/source.key";
-        locations."/".proxyPass = "http://127.0.0.1:8096";
+  nodes.source =
+    { lib, ... }:
+    {
+      imports = [
+        server
+        ../modules/jellyfin.nix
+        ../modules/server-sync.nix
+      ];
+      sea-nettle.jellyfin = {
+        initialAdmin.name = "source-admin";
+        mediaDirectory = "/srv/media";
+        servePort = 8445;
       };
+      systemd.tmpfiles.rules = [ "d /srv/media 0755 root root -" ];
+
+      # Tailscale Serve needs a tailnet, so only its commands are stubbed; the unit keeps its
+      # dependencies. nginx below stands in for the proxy.
+      services.tailscale.enable = true;
+      systemd.services.jellyfin-serve.serviceConfig = {
+        ExecStart = lib.mkForce "${pkgs.coreutils}/bin/true";
+        ExecStop = lib.mkForce "${pkgs.coreutils}/bin/true";
+      };
+
+      services.nginx = {
+        enable = true;
+        virtualHosts.source = {
+          onlySSL = true;
+          sslCertificate = "${certs}/source.crt";
+          sslCertificateKey = "${certs}/source.key";
+          locations."/".proxyPass = "http://127.0.0.1:8096";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 443 ];
     };
-    networking.firewall.allowedTCPPorts = [ 443 ];
-  };
 
   nodes.replica = {
     imports = [
       server
       ../modules/replica.nix
     ];
-    sea-nettle.jellyfin.replica.sourceUrl = "https://source";
+    sea-nettle.jellyfin = {
+      initialAdmin.name = "replica-admin";
+      replica.sourceUrl = "https://source";
+    };
     security.pki.certificateFiles = [ "${certs}/source.crt" ];
     # The test re-runs activation (R-SERVER-2).
     system.switch.enable = true;
@@ -59,19 +78,20 @@ in
     PEER_LOGIN = "74c2e693-6ab7-40fa-858d-c752d48cb45c"
     SERVER_SYNC = "ebd650b5-6f4c-4ccb-b10d-23dffb3a7286"
     PEER_PROVIDER = "Jellyfin.Plugin.PeerLogin.PeerAuthenticationProvider"
+    ADMIN_PASSWORD_FILE = "/run/jellyfin-admin-password"
 
 
     # Jellyfin revokes a user's earlier token when they sign in again from the same device.
     device_ids = itertools.count()
 
 
-    def api(machine, method, path, body=None, token=None, expect=200, device="vm-test"):
+    def api(machine, method, path, body=None, token=None, expect=200, device="vm-test", base="http://127.0.0.1:8096"):
         auth = f'MediaBrowser Client="VM Test", Device="vm", DeviceId="{device}", Version="1"'
         if token:
             auth += f', Token="{token}"'
         cmd = (
             f"curl -sS -o /tmp/body -w '%{{http_code}}' -X {method}"
-            f" http://127.0.0.1:8096{path} -H {shlex.quote('Authorization: ' + auth)}"
+            f" {base}{path} -H {shlex.quote('Authorization: ' + auth)}"
         )
         if body is not None:
             cmd += f" -H 'Content-Type: application/json' --data-binary {shlex.quote(json.dumps(body))}"
@@ -105,12 +125,20 @@ in
         wait_for_jellyfin(machine)
 
 
-    def complete_wizard(machine, admin):
-        machine.wait_until_succeeds("curl -sf http://127.0.0.1:8096/Startup/Configuration -H 'Authorization: MediaBrowser Client=\"VM Test\", Device=\"vm\", DeviceId=\"vm-test\", Version=\"1\"'")
-        api(machine, "GET", "/Startup/User")
-        api(machine, "POST", "/Startup/User", {"Name": admin, "Password": "admin-pw"}, expect=204)
-        api(machine, "POST", "/Startup/Complete", expect=204)
-        return sign_in(machine, admin, "admin-pw")
+    def write_admin_password(machine, password):
+        machine.succeed(f"(umask 077; printf '%s\\n' {shlex.quote(password)} >{ADMIN_PASSWORD_FILE})")
+
+
+    def wizard_completed(machine):
+        return api(machine, "GET", "/System/Info/Public")["StartupWizardCompleted"]
+
+
+    def unit_time(machine, unit, prop):
+        return int(machine.succeed(f"systemctl show -P {prop} {unit}"))
+
+
+    def admin_log(machine):
+        return machine.succeed("journalctl -b -o cat -u jellyfin-initial-admin.service")
 
 
     def replica_user(name):
@@ -124,8 +152,51 @@ in
     start_all()
     wait_for_jellyfin(source)
     wait_for_jellyfin(replica)
-    source_admin = complete_wizard(source, "source-admin")
-    replica_admin = complete_wizard(replica, "replica-admin")
+
+    with subtest("R-SERVER-6: without its password file, a server stays unclaimed and unpublished"):
+        for machine in [source, replica]:
+            machine.wait_until_succeeds("systemctl is-failed jellyfin-initial-admin.service")
+            log = admin_log(machine)
+            assert "jellyfin-initial-admin.service: Failed to set up credentials: No such file or directory" in log, log
+            assert not wizard_completed(machine)
+        assert source.succeed("systemctl show -P ActiveState jellyfin-serve.service").strip() == "inactive"
+        assert unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic") == 0
+
+    with subtest("R-SERVER-6: an interrupted setup is refused until Jellyfin restarts"):
+        # Stands in for an earlier run that stopped before completing the wizard.
+        api(source, "GET", "/Startup/User")
+        api(source, "POST", "/Startup/User", {"Name": "source-admin", "Password": "admin-pw"}, expect=204)
+        write_admin_password(source, "admin-pw")
+        source.fail("systemctl start jellyfin-initial-admin.service")
+        assert "first user already has a password" in admin_log(source)
+        assert not wizard_completed(source)
+        assert unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic") == 0
+        # The unit reads system.xml before Jellyfin's startup completes the wizard.
+        source.succeed("systemctl restart jellyfin.service jellyfin-initial-admin.service")
+        wait_for_jellyfin(source)
+        assert wizard_completed(source)
+        assert "system.xml now marks the startup wizard complete" in admin_log(source)
+        source.succeed("systemctl start jellyfin-serve.service")
+        source_admin = sign_in(source, "source-admin", "admin-pw")
+
+    with subtest("R-SERVER-6: a new server gets the configured administrator"):
+        write_admin_password(replica, "admin-pw")
+        replica.succeed("systemctl start jellyfin-initial-admin.service")
+        assert "Created the Jellyfin administrator replica-admin" in admin_log(replica)
+        assert wizard_completed(replica)
+        replica_admin = sign_in(replica, "replica-admin", "admin-pw")
+        assert api(replica, "GET", "/Users/Me", token=replica_admin)["Policy"]["IsAdministrator"]
+
+    with subtest("R-SERVER-6: restarting Jellyfin re-checks the administrator before Serve returns"):
+        serve_before = unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic")
+        restart_jellyfin(source)
+        source.wait_for_unit("jellyfin-serve.service")
+        jellyfin_start = unit_time(source, "jellyfin.service", "ExecMainStartTimestampMonotonic")
+        admin_done = unit_time(source, "jellyfin-initial-admin.service", "ActiveEnterTimestampMonotonic")
+        serve_start = unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic")
+        assert serve_before < jellyfin_start < admin_done <= serve_start, (serve_before, jellyfin_start, admin_done, serve_start)
+        assert "system.xml marks the startup wizard complete" in admin_log(source)
+        source_admin = sign_in(source, "source-admin", "admin-pw")
 
     alice = api(source, "POST", "/Users/New", {"Name": "Alice", "Password": "alice-1"}, token=source_admin)
     api(source, "POST", "/Users/New", {"Name": "bob", "Password": "bob-1"}, token=source_admin)
@@ -186,6 +257,8 @@ in
                 assert local.startswith("127.0.0.1:"), f"{machine.name}: {line}"
         replica.fail("curl -sf --max-time 5 http://source:8096/health")
         replica.succeed("curl -sf --max-time 5 https://source/health")
+        # The wizard's remote access step is skipped; proxied requests still work.
+        api(replica, "GET", "/System/Info", token=source_admin, base="https://source")
 
     with subtest("R-SERVER-4: Jellyfin cannot modify the media directory"):
         pid = source.succeed("systemctl show -P MainPID jellyfin.service").strip()
@@ -201,7 +274,8 @@ in
         assert server_sync["Version"] == "12.2.11.4", server_sync
         assert server_sync["Status"] == "Active", server_sync
 
-    with subtest("R-SERVER-2: dashboard changes survive restarts and activation"):
+    with subtest("R-SERVER-2, R-SERVER-6: dashboard changes survive restarts and activation"):
+        write_admin_password(replica, "changed-pw")
         config = api(replica, "GET", f"/Plugins/{PEER_LOGIN}/Configuration", token=replica_admin)
         assert config["SourceUrl"] == "https://source", config
         config["SourceUrl"] = "https://source/"
@@ -213,6 +287,9 @@ in
         config = api(replica, "GET", f"/Plugins/{PEER_LOGIN}/Configuration", token=replica_admin)
         assert config["SourceUrl"] == "https://source/", config
         sign_in(replica, "alice", "alice-2")
+        replica.wait_for_unit("jellyfin-initial-admin.service")
+        assert admin_log(replica).count("system.xml marks the startup wizard complete") >= 2
+        sign_in(replica, "replica-admin", "changed-pw", expect=401)
 
     with subtest("R-SERVER-5: a plugin disabled in the dashboard stays disabled"):
         api(replica, "POST", f"/Plugins/{SERVER_SYNC}/12.2.11.4/Disable", token=replica_admin, expect=204)
@@ -221,5 +298,9 @@ in
         server_sync = plugin(replica, replica_admin, SERVER_SYNC)
         assert server_sync["Status"] == "Disabled", server_sync
         assert server_sync["Version"] == "12.2.11.4", server_sync
+
+    with subtest("R-SERVER-6: administrator passwords never reach the journal"):
+        for machine in [source, replica]:
+            machine.fail("journalctl -b --no-pager | grep -F -e admin-pw -e changed-pw")
   '';
 }
