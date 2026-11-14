@@ -253,6 +253,9 @@ It signs in to Jellyfin's loopback URL as the initial administrator, with the
 password read from `initialAdmin.passwordFile` (R-PAIR-2), and signs out when
 it finishes, even after a failure (R-PAIR-3). It signs in with a fixed device
 ID, so a run that could not sign out has its token revoked by the next one.
+Signing in updates the account's sign-in bookkeeping, as any sign-in does: its
+last login date, and its failed-attempt count, which a failed sign-in raises
+and a successful one resets. These are not configuration (R-PAIR-1).
 
 Apart from its own session, every call it makes reads, except Server Sync's
 link check, `POST /Sync/Hints/CheckPeer`, which it runs for each enabled entry

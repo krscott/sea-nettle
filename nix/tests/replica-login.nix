@@ -104,7 +104,7 @@ in
             auth += f', Token="{token}"'
         cmd = (
             f"curl -sS -o /tmp/body -w '%{{http_code}}' -X {method}"
-            f" {base}{path} -H {shlex.quote('Authorization: ' + auth)}"
+            f" {shlex.quote(base + path)} -H {shlex.quote('Authorization: ' + auth)}"
         )
         if body is not None:
             cmd += f" -H 'Content-Type: application/json' --data-binary {shlex.quote(json.dumps(body))}"
@@ -210,9 +210,13 @@ in
     def configuration(machine, token):
         """What `sea-nettle status` must leave unchanged (R-PAIR-1)."""
         active = plugin(machine, token, SERVER_SYNC)["Status"] == "Active"
-        # Every sign-in, including the command's own, updates these.
-        activity = ("LastLoginDate", "LastActivityDate")
-        users = [{k: v for k, v in u.items() if k not in activity} for u in api(machine, "GET", "/Users", token=token)]
+        # Jellyfin's sign-in bookkeeping: every sign-in, including the command's own, updates
+        # these, and a failed one counts toward lockout.
+        users = []
+        for user in api(machine, "GET", "/Users", token=token):
+            user = {k: v for k, v in user.items() if k not in ("LastLoginDate", "LastActivityDate")}
+            user["Policy"] = {k: v for k, v in user["Policy"].items() if k != "InvalidLoginAttemptCount"}
+            users.append(user)
         return (
             server_sync_config(machine, token) if active else None,
             users,
@@ -236,8 +240,10 @@ in
         assert not [d for d in devices if d.get("AppName") == "sea-nettle"], devices
         sessions = api(machine, "GET", "/Sessions", token=token)
         assert not [s for s in sessions if s.get("Client") == "sea-nettle"], sessions
-        # A failed run prints its error to stderr only.
-        return json.loads(out) if out.strip() and not text else out
+        if text or code not in (0, 3):
+            # A failed run prints its error to stderr.
+            return out + err
+        return json.loads(out)
 
 
     def attention(machine, token, expect):
