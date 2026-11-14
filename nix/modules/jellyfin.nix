@@ -3,6 +3,7 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }:
 
@@ -31,6 +32,15 @@ let
     name = "jellyfin-check-network";
     runtimeInputs = [ pkgs.libxml2 ];
     text = builtins.readFile ./check-network.sh;
+  };
+
+  initialAdmin = pkgs.writeShellApplication {
+    name = "jellyfin-initial-admin";
+    runtimeInputs = [
+      pkgs.curl
+      pkgs.jq
+    ];
+    text = builtins.readFile ./initial-admin.sh;
   };
 
   checkMedia = pkgs.writeShellScript "jellyfin-check-media" ''
@@ -70,6 +80,20 @@ in
       default = null;
       example = "/srv/media";
       description = "Media directory that Jellyfin reads but cannot modify, or null for none.";
+    };
+
+    initialAdmin = {
+      name = lib.mkOption {
+        type = lib.types.nonEmptyStr;
+        example = "admin";
+        description = "Name of the administrator that a new server is created with. Changes after the first setup have no effect.";
+      };
+
+      passwordFile = lib.mkOption {
+        type = lib.types.externalPath;
+        example = "/run/secrets/jellyfin-admin";
+        description = "Runtime file, outside the Nix store, that holds the initial administrator's password. It must exist on every boot; changes after the first setup have no effect.";
+      };
     };
 
     servePort = lib.mkOption {
@@ -158,16 +182,41 @@ in
       };
     };
 
+    # Seed once: claim a new server before anyone else can (R-SERVER-6).
+    systemd.services.jellyfin-initial-admin = {
+      description = "Jellyfin initial administrator";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "jellyfin.service" ];
+      requires = [ "jellyfin.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = utils.escapeSystemdExecArgs [
+          (lib.getExe initialAdmin)
+          upstream
+          cfg.initialAdmin.name
+        ];
+        # toString keeps the path out of the Nix store.
+        LoadCredential = "password:${toString cfg.initialAdmin.passwordFile}";
+        DynamicUser = true;
+        # The script bounds its own waits; this is a backstop.
+        TimeoutStartSec = "10min";
+      };
+    };
+
     systemd.services.jellyfin-serve = lib.mkIf (cfg.servePort != null) {
       description = "Jellyfin tailnet HTTPS endpoint";
       wantedBy = [ "multi-user.target" ];
+      # Never publish an unclaimed server (R-SERVER-6).
       after = [
         "tailscaled.service"
         "jellyfin.service"
+        "jellyfin-initial-admin.service"
       ];
       requires = [
         "tailscaled.service"
         "jellyfin.service"
+        "jellyfin-initial-admin.service"
       ];
       serviceConfig = {
         Type = "oneshot";

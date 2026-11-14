@@ -120,3 +120,15 @@ do not migrate or backfill unrelated requirements.
 
   Rationale: Administrators must be able to switch off a misbehaving plugin
   without a rebuild.
+
+- **R-SERVER-6** [test] A new server gets the configured administrator account
+  and a completed setup wizard before its HTTPS endpoint opens. The password
+  comes from a file at runtime and is never written to the Nix store or the
+  journal. Once setup is complete, restarts and configuration changes leave the
+  account unchanged.
+
+  Rationale: Until setup completes, anyone who can reach Jellyfin can claim its
+  administrator account, change libraries, and browse the server's filesystem,
+  so the tailnet must never reach an unclaimed server. The administrator then
+  manages the account in the dashboard, and a rebuild must not revert those
+  changes.

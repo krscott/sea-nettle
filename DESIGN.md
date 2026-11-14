@@ -174,6 +174,36 @@ interface when its filters leave no address. Evaluation fails if
 with exit status 3 and no restart, to touch a port that another handler or
 Funnel uses, and on stop removes only its own handler.
 
+`initialAdmin` (required) seeds the first administrator (R-SERVER-6). Until
+Jellyfin's startup wizard completes, its first-time-setup policy lets any
+caller use the startup, library, and environment endpoints. The
+`jellyfin-initial-admin` oneshot runs `initial-admin.sh` after Jellyfin
+starts, and `jellyfin-serve` requires it. The script waits up to 5 minutes for
+`/Branding/Configuration`, which only the fully started server answers; during
+startup, a temporary setup server always reports the wizard incomplete on
+`/System/Info/Public`. The script then does nothing if `/System/Info/Public`
+reports the wizard complete. Otherwise it calls `GET /Startup/User`, which
+creates the first user, then `POST /Startup/User` with the name and password,
+and `POST /Startup/Complete`. It skips the remote-access step, which would rewrite
+`network.xml`, and keeps Jellyfin's default server name and language.
+
+The password arrives through `LoadCredential` in a `DynamicUser` service and
+reaches curl through a pipe. `passwordFile` must be outside the Nix store, and
+the module uses it only as a string, so a path literal is never copied.
+
+`POST /Startup/User` answers 403 when the first user already has a password.
+The unit then fails without retrying, because that password may not be the
+configured one. At startup, Jellyfin marks the wizard complete if an
+administrator with a password exists (`EnsureStartupWizardIntegrity`), so
+restarting Jellyfin recovers a run interrupted between the last two calls.
+Local processes can still claim a new server in the seconds between Jellyfin's
+start and the claim.
+
+Through `Requires`, restarting Jellyfin restarts `jellyfin-initial-admin` and
+then `jellyfin-serve`, so the endpoint returns only after the check. A missing
+password file fails the unit at credential setup on every boot, which keeps
+the endpoint closed.
+
 ### `jellyfin-plugins`
 
 `plugins` maps a plugin directory name to a payload directory (assemblies and
@@ -211,12 +241,14 @@ Imports `jellyfin` and `server-sync`, and adds:
 | Test | Covers | Runs in |
 | --- | --- | --- |
 | Plugin unit tests (package check phase) | R-LOGIN-1 to R-LOGIN-9 | `checks.plugin` |
-| Module eval tests (`nix/tests/modules.nix`) | R-SERVER-1 to R-SERVER-4, R-LOGIN-7 | `checks.modules` |
+| Module eval tests (`nix/tests/modules.nix`) | R-SERVER-1 to R-SERVER-4, R-SERVER-6, R-LOGIN-7 | `checks.modules` |
 | Script tests (`nix/tests/scripts.nix`) | R-SERVER-1, R-SERVER-3, R-SERVER-5 | `checks.scripts` |
-| VM test (`nix/tests/replica-login.nix`) | R-LOGIN-1 to R-LOGIN-6, R-LOGIN-8, R-LOGIN-9, R-SERVER-1 to R-SERVER-5 | `heavyChecks.replica-login` |
+| VM test (`nix/tests/replica-login.nix`) | R-LOGIN-1 to R-LOGIN-6, R-LOGIN-8, R-LOGIN-9, R-SERVER-1 to R-SERVER-6 | `heavyChecks.replica-login` |
 
 The VM test runs a source and a replica. The source serves HTTPS through nginx
-with a test certificate that the replica trusts.
+with a test certificate that the replica trusts. Tailscale Serve needs a
+tailnet, so the source's `jellyfin-serve` keeps its dependencies but runs stub
+commands.
 
 PR CI stays under 5 minutes of wall-clock time, so agents waiting on it keep
 their prompt cache. It runs only the fast checks: formatting, lint, and
