@@ -192,6 +192,24 @@ let
         { sea-nettle.jellyfin.initialAdmin.passwordFile = lib.mkForce "${pkgs.writeText "pw" "secret"}"; }
       ]);
 
+    # R-PAIR-2
+    "sea-nettle gets the password file's path and the pinned Server Sync version" =
+      lib.all
+        (
+          config:
+          let
+            wrapper = lib.findFirst (p: lib.getName p == "sea-nettle") null config.environment.systemPackages;
+            script = readScript (lib.getExe wrapper);
+          in
+          lib.hasInfix "--url http://127.0.0.1:8096 --admin-name admin" script
+          && lib.hasInfix "--password-file /run/secrets/jellyfin-admin" script
+          && lib.hasInfix "--server-sync-version 12.2.11.4" script
+        )
+        [
+          source
+          replica
+        ];
+
     "Serve without Tailscale fails evaluation" = assertionFails (eval [
       ../modules/jellyfin.nix
       { sea-nettle.jellyfin.servePort = 8445; }

@@ -129,14 +129,19 @@ next to the media; Jellyfin cannot write there.
    It is a local account; keep it separate from source accounts.
 2. Create a library at `${dataDir}/replica` (by default
    `/var/lib/jellyfin/replica`).
-3. In Server Sync, add the source's HTTPS URL, sign in, and map the source
-   library to the replica library with **Storage = Link**. Start with a small
-   whitelist. Non-video items in a Link mapping are copied, not linked.
-4. On the source, add the replica in Server Sync, pair the entries, allow
-   linking, and grant only the peer permissions you need.
-5. Check the mappings with Server Sync's connection and link checks, then
-   enable content and history sync.
-6. Users sign in to the replica with their source credentials (see Peer Login
+3. In Server Sync, add the source's HTTPS URL with **Direction = Pull**, sign
+   in, and map the source library to the replica library with
+   **Storage = Link**. Start by setting the mapping's **Library Filter** to
+   Whitelist with a few items. Non-video items in a Link mapping are copied, not linked.
+4. On the source, add the replica in Server Sync with **Direction = Push**,
+   allow linking, and grant only the peer permissions you need.
+5. On each server, allow the key user of the other server's entry under
+   **Server Sync > Settings > Whitelist** with no locations. Peer calls reach
+   Jellyfin through the local HTTPS proxy, so they all come from 127.0.0.1 and
+   a location cannot tell peers apart.
+6. Run `sudo sea-nettle status` on both servers (see "Checking a pair" below)
+   until neither reports anything, then enable content and history sync.
+7. Users sign in to the replica with their source credentials (see Peer Login
    below). A new replica user starts with Jellyfin's default policy, which
    includes access to all libraries. After a user's first sign-in, map that
    user in Server Sync so their policy, history, and settings sync, or restrict
@@ -149,8 +154,36 @@ Sync has no configuration yet. The cache limit does not reserve disk space.
 empty unless you have budgeted the space. Uncached videos need the source; fully
 cached videos play during a source outage.
 
-Do not copy databases between servers. To recover a broken peer, check its URL,
-mappings, credentials, and pairing in the dashboard.
+Do not copy databases between servers. To recover a broken peer, run
+`sea-nettle status` on both servers and follow its fixes.
+
+## Checking a pair
+
+`sudo sea-nettle status` checks this server's Server Sync setup and never
+changes configuration. Run it on each server; each run covers one direction.
+It signs in as the initial administrator with the password in
+`initialAdmin.passwordFile`, and signs out before it exits. If the password
+was changed in the dashboard, update the file to match: each refused run counts
+as a failed sign-in, and Jellyfin disables the account once it reaches the
+account's lockout limit, if one is set.
+
+It lists each peer with Server Sync's link check verdict, then what needs
+attention and how to fix it: unreachable or unpaired peers, peers that do not
+list this server, missing or wrong server IDs, mappings to deleted libraries
+or users, and Peer Login users without a user mapping. Disabled entries are not
+checked. `--json` prints the same report as JSON.
+
+| Exit status | Meaning |
+| --- | --- |
+| 0 | Nothing needs attention |
+| 3 | The report lists something that needs attention |
+| 1 | The command failed; the error says why |
+| 2 | Usage error |
+
+The link check is the dashboard's **Check Link**. The peer answers it by calling
+this server back to pair, so each run also repairs the pairing in its
+direction. Pairing secrets live in Server Sync's database, not its
+configuration.
 
 ## Peer Login
 

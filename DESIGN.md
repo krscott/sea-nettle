@@ -13,6 +13,7 @@ NixOS modules package the server setup and the plugins.
 | `plugin/Jellyfin.Plugin.PeerLogin/` | Peer Login plugin (C#) |
 | `plugin/Jellyfin.Plugin.PeerLogin.Tests/` | Plugin unit tests (xUnit, faked source HTTP and user store) |
 | `plugin/package.nix`, `plugin/deps.json` | Nix package and its NuGet lock file |
+| `tool/` | `sea-nettle` command (Python) and its unit tests |
 | `nix/modules/` | NixOS modules and their operator docs (`README.md`) |
 | `nix/tests/` | Module eval tests, script tests, and the VM test |
 
@@ -229,7 +230,9 @@ operator uninstalls it in the dashboard.
 
 ### `server-sync`
 
-Pins a Server Sync release through `jellyfin-plugins`.
+Pins a Server Sync release through `jellyfin-plugins`, and installs a
+`sea-nettle` wrapper that passes the command this server's loopback URL, the
+`initialAdmin` name and password file path, and the pinned Server Sync version.
 
 ### `replica`
 
@@ -240,17 +243,83 @@ Imports `jellyfin` and `server-sync`, and adds:
 - Server Sync link-cache defaults and Peer Login's `sourceUrl`, each seeded
   once as plugin configuration and writable afterwards (R-SERVER-2).
 
+## `sea-nettle` command
+
+`sea-nettle status` checks one server's Server Sync setup. Operators run it on
+each host; together, the two runs cover both directions of a pair. It is typed
+Python with no dependencies outside the standard library.
+
+It signs in to Jellyfin's loopback URL as the initial administrator, with the
+password read from `initialAdmin.passwordFile` (R-PAIR-2), and signs out when
+it finishes, even after a failure, Ctrl-C, or SIGTERM (R-PAIR-3). A signal
+during the sign-out request itself, or SIGKILL, leaves the token until the
+next successful run revokes it. If the sign-out fails, the command says how to
+remove the session and exits 1. It signs in with a fixed device
+ID, so a successful sign-in revokes the token of an earlier run that could not
+sign out, or of a run still going on the same host. A 401 at sign-out
+therefore counts as signed out, with a note: it can also mean the account was
+disabled, which keeps the token until the account is enabled again.
+Signing in updates the account's sign-in bookkeeping, as any sign-in does: its
+last login date, and its failed-attempt count, which a failed sign-in raises
+and a successful one resets. These are not configuration (R-PAIR-1).
+
+Apart from its own session, every call it makes reads, except Server Sync's
+link check, `POST /Sync/Hints/CheckPeer`, which it runs for each enabled entry
+with a URL and a key (R-PAIR-1). The check calls the peer's `/Sync/Peer/Link`, and the
+peer, if its entry for this server is enabled, calls back with a pairing
+secret, which this server accepts only while that check is open. So each run
+also pairs its direction: the pairing repair that the dashboard's **Check
+Link** performs. The secrets live in Server Sync's database, not its
+configuration.
+
+Server Sync returns each entry's stored API key, encrypted, with its
+configuration. The command's model keeps only whether a key is present. The
+link check sends Server Sync's kept-key placeholder with the entry's `Key` and
+URL, so Server Sync uses the key it stores for that entry, and only at its
+saved URL (R-PAIR-2). Pairing needs that entry `Key`: Server Sync opens the
+pairing window only for a saved entry whose URL is unchanged.
+
+The report lists the peers with Server Sync's link check verdict, and what
+needs attention, each with a fix (R-PAIR-4). Each rule is a pure function over
+what the command read:
+
+| Code | Condition |
+| --- | --- |
+| `server-sync-missing`, `server-sync-inactive` | No active Server Sync; its configuration is not assessed |
+| `server-sync-version` | The loaded version differs from the pin |
+| `no-peers` | No peer entries |
+| `entry-duplicate-server-id` | Two entries record one server ID; Server Sync matches that peer's calls only to the first |
+| `entry-incomplete` | An enabled entry lacks a URL or key |
+| `entry-no-server-id` | No recorded server ID; pairing callbacks find entries by it |
+| `entry-server-id-mismatch` | The recorded ID differs, ignoring case as Server Sync does, from the one the peer reports |
+| `peer-unreachable`, `peer-not-listed`, `peer-unpaired`, `peer-link-warning` | The link check's first problem, in that order; a check with no answer within 5 minutes counts as unreachable |
+| `mapping-missing-library`, `mapping-missing-user` | A mapping names a local library or user that no longer exists |
+| `user-mapping-skipped` | A standard user's key with mappings for other users, which Server Sync skips |
+| `unmapped-user` | A Peer Login user without an enabled user mapping |
+
+Disabled entries are listed but not assessed. The exit status is 0 when
+nothing needs attention, 3 when something does, 1 when the command fails, and
+2 for usage errors.
+
+Server Sync's caller whitelist matches the address a call comes from.
+Jellyfin honours forwarded headers only for configured known proxies, and
+`network.xml` configures none, so peer calls through a local proxy such as
+Tailscale Serve arrive from 127.0.0.1. Peer grants therefore need no locations.
+
 ## Tests and CI
 
 | Test | Covers | Runs in |
 | --- | --- | --- |
 | Plugin unit tests (package check phase) | R-LOGIN-1 to R-LOGIN-9 | `checks.plugin` |
-| Module eval tests (`nix/tests/modules.nix`) | R-SERVER-1 to R-SERVER-4, R-SERVER-6, R-LOGIN-7 | `checks.modules` |
+| `sea-nettle` unit tests and type checks (package check phase) | R-PAIR-2, R-PAIR-4 | `checks.tool` |
+| Module eval tests (`nix/tests/modules.nix`) | R-SERVER-1 to R-SERVER-4, R-SERVER-6, R-LOGIN-7, R-PAIR-2 | `checks.modules` |
 | Script tests (`nix/tests/scripts.nix`) | R-SERVER-1, R-SERVER-3, R-SERVER-5 | `checks.scripts` |
-| VM test (`nix/tests/replica-login.nix`) | R-LOGIN-1 to R-LOGIN-6, R-LOGIN-8, R-LOGIN-9, R-SERVER-1 to R-SERVER-6 | `heavyChecks.replica-login` |
+| VM test (`nix/tests/replica-login.nix`) | R-LOGIN-1 to R-LOGIN-6, R-LOGIN-8, R-LOGIN-9, R-SERVER-1 to R-SERVER-6, R-PAIR-1 to R-PAIR-4 | `heavyChecks.replica-login` |
 
-The VM test runs a source and a replica. The source serves HTTPS through nginx
-with a test certificate that the replica trusts. Tailscale Serve needs a
+The VM test runs a source and a replica. Each serves HTTPS through nginx with a
+test certificate that the other trusts. Until `sea-nettle` can set up a pair,
+the test script configures Server Sync's entries, grants, and mappings through
+its API, as the dashboard does. Tailscale Serve needs a
 tailnet, so the source's `jellyfin-serve` keeps its dependencies but runs stub
 commands.
 
