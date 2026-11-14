@@ -15,6 +15,7 @@ let
     name = "jellyfin-install-plugin";
     runtimeInputs = [
       pkgs.coreutils
+      pkgs.findutils
       pkgs.jq
     ];
     text = builtins.readFile ./install-plugin.sh;
@@ -22,7 +23,8 @@ let
 
   installAll = pkgs.writeShellScript "jellyfin-install-plugins" (
     lib.concatLines (
-      lib.mapAttrsToList (
+      [ "set -eu" ]
+      ++ lib.mapAttrsToList (
         name: payload:
         "${lib.getExe installPlugin} ${
           lib.escapeShellArgs [

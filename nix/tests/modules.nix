@@ -24,6 +24,8 @@ let
   failedAssertions = config: map (a: a.message) (lib.filter (a: !a.assertion) config.assertions);
   assertionsPass = config: failedAssertions config == [ ];
   assertionFails = config: fragment: lib.any (lib.hasInfix fragment) (failedAssertions config);
+  assertionFailures =
+    config: fragment: lib.length (lib.filter (lib.hasInfix fragment) (failedAssertions config));
 
   source = eval [
     ../modules/jellyfin.nix
@@ -45,7 +47,13 @@ let
   unit = config: config.systemd.services.jellyfin;
   sandbox = config: (unit config).serviceConfig;
   readScript = path: builtins.readFile path;
-  execStartPre = config: lib.toList (sandbox config).ExecStartPre;
+  execStartPre = config: map toString (lib.toList (sandbox config).ExecStartPre);
+  # Each ExecStartPre command line followed by its script's contents.
+  readStartPre =
+    config:
+    lib.concatMapStrings (command: command + readScript (lib.head (lib.splitString " " command))) (
+      execStartPre config
+    );
   tmpfiles = config: lib.foldl' (a: b: a // b) { } (lib.attrValues config.systemd.tmpfiles.settings);
   dataDir = config: config.services.jellyfin.dataDir;
   configurations = config: "${dataDir config}/plugins/configurations";
@@ -85,7 +93,30 @@ let
       lib.hasInfix "<LocalNetworkAddresses><string>127.0.0.1</string></LocalNetworkAddresses>" (
         builtins.readFile seeded
       )
-      && lib.hasInfix "<AutoDiscovery>false</AutoDiscovery>" (builtins.readFile seeded);
+      && lib.hasInfix "<AutoDiscovery>false</AutoDiscovery>" (builtins.readFile seeded)
+      &&
+        lib.all
+          (
+            config:
+            lib.hasInfix "jellyfin-check-network ${lib.escapeShellArg "${config.services.jellyfin.configDir}/network.xml"}" (
+              readStartPre config
+            )
+          )
+          [
+            source
+            replica
+          ];
+
+    "hardware acceleration fails evaluation" = assertionFails (eval [
+      ../modules/jellyfin.nix
+      {
+        services.jellyfin.hardwareAcceleration = {
+          enable = true;
+          type = "vaapi";
+          device = "/dev/dri/renderD128";
+        };
+      }
+    ]) "hardware transcoding cannot work";
 
     # R-SERVER-1
     "Serve proxies the HTTPS port to localhost only" =
@@ -116,24 +147,27 @@ let
     # R-SERVER-3
     "pinned plugins install before every start" =
       let
-        install = lib.concatMapStrings readScript (execStartPre replica);
+        install = readStartPre replica;
       in
-      lib.hasInfix "/plugins/Server Sync" install
+      lib.hasInfix "set -eu\n" install
+      && lib.hasInfix "/plugins/Server Sync" install
       && lib.hasInfix "/plugins/Peer Login" install
       && lib.hasInfix "jellyfin-server-sync-12.2.11.4" install
       && lib.hasInfix "jellyfin-plugin-peer-login-" install
       && (tmpfiles replica)."${dataDir replica}/plugins".d.user == replica.services.jellyfin.user;
 
-    "plugins are pinned to Jellyfin 12.4" = assertionFails (eval [
-      ../modules/replica.nix
-      {
-        sea-nettle.jellyfin.replica.sourceUrl = "https://source.example.net";
-        services.jellyfin.package = pkgs.jellyfin.overrideAttrs {
-          version = "12.5.0";
-          __intentionallyOverridingVersion = true;
-        };
-      }
-    ]) "requires Jellyfin 12.4";
+    # Server Sync and Peer Login each pin the Jellyfin version.
+    "plugins are pinned to Jellyfin 12.4" =
+      assertionFailures (eval [
+        ../modules/replica.nix
+        {
+          sea-nettle.jellyfin.replica.sourceUrl = "https://source.example.net";
+          services.jellyfin.package = pkgs.jellyfin.overrideAttrs {
+            version = "12.5.0";
+            __intentionallyOverridingVersion = true;
+          };
+        }
+      ]) "requires Jellyfin 12.4" == 2;
 
     # R-SERVER-4
     "media is mounted read-only" =
@@ -145,24 +179,40 @@ let
       && !lib.any (lib.hasPrefix "/srv") (s.BindPaths ++ s.ReadWritePaths)
       && s.ProtectSystem == "strict"
       && lib.elem "/srv/media" (unit source).unitConfig.RequiresMountsFor
-      && lib.hasInfix "Media directory /srv/media is absent" (
-        lib.concatMapStrings readScript (execStartPre source)
-      );
+      && lib.hasInfix "Media directory /srv/media is absent" (readStartPre source);
 
     "replica has no media directory" =
       !lib.any (lib.hasPrefix "-/srv") (sandbox replica).BindReadOnlyPaths
       && (tmpfiles replica) ? "${dataDir replica}/replica";
 
     # R-LOGIN-7
-    "insecure source URL fails evaluation" =
-      assertionFails (eval [
-        ../modules/replica.nix
-        { sea-nettle.jellyfin.replica.sourceUrl = "http://source.example.net:8096"; }
-      ]) "must use HTTPS"
-      && assertionsPass (eval [
-        ../modules/replica.nix
-        { sea-nettle.jellyfin.replica.sourceUrl = "http://127.0.0.1:8096"; }
-      ]);
+    "only HTTPS or loopback source URLs evaluate" =
+      let
+        accepts =
+          url:
+          assertionsPass (eval [
+            ../modules/replica.nix
+            { sea-nettle.jellyfin.replica.sourceUrl = url; }
+          ]);
+      in
+      lib.all accepts [
+        "https://source.example.net"
+        "HTTPS://Source.example.net:8445/jellyfin"
+        "https://[2001:db8::1]:8920"
+        "http://localhost:8096"
+        "http://LOCALHOST"
+        "http://127.0.0.1:8096/"
+        "http://[::1]:8096"
+      ]
+      && !lib.any accepts [
+        "http://source.example.net:8096"
+        "http://192.0.2.1"
+        "https://"
+        "https:///path"
+        "ftp://source.example.net"
+        "source.example.net"
+        ""
+      ];
 
     "source URL is seeded into Peer Login" =
       lib.hasInfix "<SourceUrl>https://source.example.net:8445</SourceUrl>"

@@ -5,7 +5,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using MediaBrowser.Common.Net;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.PeerLogin;
@@ -44,14 +43,24 @@ internal sealed partial class SourceClient
     // Jellyfin's request DTOs use PascalCase names.
     private static readonly JsonSerializerOptions _requestOptions = new();
 
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly HttpClient _httpClient;
     private readonly ILogger _logger;
 
-    public SourceClient(IHttpClientFactory httpClientFactory, ILogger logger)
+    public SourceClient(HttpClient httpClient, ILogger logger)
     {
-        _httpClientFactory = httpClientFactory;
+        _httpClient = httpClient;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Creates the production handler. A redirect could resend credentials to a host that
+    /// <see cref="ParseSourceUrl"/> would refuse, so redirects are answered as unexpected responses (R-LOGIN-7).
+    /// </summary>
+    public static SocketsHttpHandler CreateHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+    };
 
     /// <summary>
     /// Parses a configured source URL. Returns null unless it uses HTTPS or a loopback host (R-LOGIN-7).
@@ -78,7 +87,7 @@ internal sealed partial class SourceClient
         using var timeout = new CancellationTokenSource(_timeout);
         try
         {
-            using var response = await _httpClientFactory.CreateClient(NamedClient.Default)
+            using var response = await _httpClient
                 .SendAsync(request, timeout.Token)
                 .ConfigureAwait(false);
 
@@ -133,7 +142,7 @@ internal sealed partial class SourceClient
         using var timeout = new CancellationTokenSource(_timeout);
         try
         {
-            using var response = await _httpClientFactory.CreateClient(NamedClient.Default)
+            using var response = await _httpClient
                 .SendAsync(request, timeout.Token)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)

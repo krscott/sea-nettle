@@ -66,13 +66,15 @@ in
     assertions = [
       {
         assertion = lib.versions.majorMinor jellyfin.package.version == "12.4";
-        message = "The Peer Login plugin targets Jellyfin 12.4; verify compatibility before upgrading.";
+        message = "The Peer Login plugin requires Jellyfin 12.4; verify compatibility before upgrading.";
       }
       {
         # R-LOGIN-7
+        # Mirrors SourceClient.ParseSourceUrl.
         assertion =
-          lib.hasPrefix "https://" cfg.sourceUrl
-          || builtins.match "http://(localhost|127\\.[0-9.]+|\\[::1])(:[0-9]+)?(/.*)?" cfg.sourceUrl != null;
+          builtins.match "(https://([^/:]+|\\[[0-9a-f:.]+])|http://(localhost|127\\.[0-9.]+|\\[::1]))(:[0-9]+)?(/.*)?" (
+            lib.toLower cfg.sourceUrl
+          ) != null;
         message = "sea-nettle.jellyfin.replica.sourceUrl must use HTTPS unless it is a loopback address.";
       }
     ];

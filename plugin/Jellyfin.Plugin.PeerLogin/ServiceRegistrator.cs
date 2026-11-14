@@ -22,7 +22,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             // The user manager depends on all authentication providers, so resolve it lazily.
             () => services.GetRequiredService<IUserManager>(),
             services.GetRequiredService<ICryptoProvider>(),
-            services.GetRequiredService<IHttpClientFactory>(),
+            new HttpClient(SourceClient.CreateHandler()),
             services.GetRequiredService<ILogger<PeerAuthenticationProvider>>()));
     }
 }

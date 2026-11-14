@@ -68,14 +68,35 @@ public class PeerAuthenticationProviderTests
     }
 
     // R-LOGIN-2
-    [Fact]
-    public async Task UnexpectedSourceResponseRefusesTheCachedPassword()
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.TemporaryRedirect)]
+    [InlineData(HttpStatusCode.PermanentRedirect)]
+    public async Task UnexpectedSourceStatusRefusesTheCachedPassword(HttpStatusCode status)
     {
         var harness = new Harness();
         harness.AddUser("Alice", PeerProviderId, "secret");
-        harness.Source.Respond(HttpStatusCode.NotFound);
+        harness.Source.Respond(status);
 
         await Assert.ThrowsAsync<AuthenticationException>(() => harness.SignIn("Alice", "secret"));
+        Assert.Single(harness.Source.Requests);
+    }
+
+    // R-LOGIN-2
+    [Theory]
+    [InlineData("<html>not json</html>")]
+    [InlineData("""{"User":{"Name":"Alice"}}""")]
+    [InlineData("""{"AccessToken":"token"}""")]
+    [InlineData("""{"User":{"Name":""},"AccessToken":"token"}""")]
+    public async Task UnusableSourceAnswerRefusesTheCachedPassword(string body)
+    {
+        var harness = new Harness();
+        harness.AddUser("Alice", PeerProviderId, "secret");
+        harness.Source.RespondOk(body);
+
+        await Assert.ThrowsAsync<AuthenticationException>(() => harness.SignIn("Alice", "secret"));
+        Assert.Empty(harness.Source.Logouts);
     }
 
     // R-LOGIN-3
@@ -145,16 +166,19 @@ public class PeerAuthenticationProviderTests
     }
 
     // R-LOGIN-6
-    [Fact]
-    public async Task SignInKeepsTheLocalAdministratorFlag()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SignInKeepsTheLocalAdministratorFlag(bool isAdministrator)
     {
         var harness = new Harness();
         var user = harness.AddUser("Alice", PeerProviderId, "old");
-        harness.Source.Accept("Alice", isAdministrator: true);
+        user.SetPermission(PermissionKind.IsAdministrator, isAdministrator);
+        harness.Source.Accept("Alice", isAdministrator: !isAdministrator);
 
         await harness.SignIn("Alice", "new");
 
-        Assert.False(user.HasPermission(PermissionKind.IsAdministrator));
+        Assert.Equal(isAdministrator, user.HasPermission(PermissionKind.IsAdministrator));
     }
 
     // R-LOGIN-7
@@ -173,6 +197,15 @@ public class PeerAuthenticationProviderTests
 
         await Assert.ThrowsAsync<AuthenticationException>(() => harness.SignIn("Alice", "secret"));
         Assert.Empty(harness.Source.Requests);
+    }
+
+    // R-LOGIN-7
+    [Fact]
+    public void SourceRedirectsAreNotFollowed()
+    {
+        using var handler = SourceClient.CreateHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
     }
 
     // R-LOGIN-7
@@ -216,6 +249,20 @@ public class PeerAuthenticationProviderTests
 
         await Assert.ThrowsAsync<AuthenticationException>(() => harness.Provider.Authenticate("alice2", "secret", null));
 
+        Assert.Single(harness.Source.Logouts);
+    }
+
+    // R-LOGIN-1, R-LOGIN-8
+    [Fact]
+    public async Task UserThatCannotBeSavedIsRemoved()
+    {
+        var harness = new Harness { FailUpdates = true };
+        harness.Source.Accept("Alice");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => harness.SignIn("Alice", "secret"));
+
+        // A half-created user would sign in with an empty password through the default provider.
+        Assert.Null(harness.Find("Alice"));
         Assert.Single(harness.Source.Logouts);
     }
 

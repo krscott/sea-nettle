@@ -39,13 +39,15 @@ imports `replica`.
 Jellyfin runs as `services.jellyfin.user` in an empty read-only filesystem. It
 sees the Nix store, basic name-service files, the system CA bundle, its own
 writable data, configuration, log and cache directories, and
-`sea-nettle.jellyfin.mediaDirectory` read-only. Hardware transcoding is not
-enabled. If the media directory is absent, Jellyfin fails to start with a
+`sea-nettle.jellyfin.mediaDirectory` read-only. It has no devices, so
+hardware transcoding is not supported. If the media directory is absent, Jellyfin fails to start with a
 message; mount the media and restart it.
 
 Configuration stays writable. The network configuration is seeded once: HTTP
-port 8096 on 127.0.0.1, automatic discovery off. Keep those values;
-`jellyfin-serve` proxies to `http://127.0.0.1:8096`. The firewall stays closed
+port 8096 on 127.0.0.1, automatic discovery off. Jellyfin refuses to start
+unless `network.xml` keeps those values with HTTPS off; `jellyfin-serve`
+proxies to `http://127.0.0.1:8096`. On a server that already has a
+`network.xml`, edit it to match, or delete it and run activation to reseed it. The firewall stays closed
 to Jellyfin's ports, and setting `services.jellyfin.openFirewall` fails
 evaluation.
 
@@ -57,13 +59,14 @@ requires its own sign-in.
 
 ## Plugins
 
-Each start copies the pinned payloads into `${dataDir}/plugins/<name>`, sets
-`autoUpdate` to false, and keeps a dashboard **Disable**. A dashboard uninstall
-is undone on the next start, and failed loads are retried. To uninstall a
+Each start replaces the files in `${dataDir}/plugins/<name>` with the pinned
+payload, sets `autoUpdate` to false, and keeps a dashboard **Disable**. A
+dashboard uninstall is undone on the next start, and failed loads are retried.
+Another version installed from the dashboard catalog is deleted on the next
+start. To uninstall a
 plugin, remove it from the configuration, rebuild, and then uninstall it in the
 dashboard.
 
-Do not install another version of a pinned plugin through the dashboard.
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.
 
@@ -90,8 +93,10 @@ next to the media; Jellyfin cannot write there.
 5. Check the mappings with Server Sync's connection and link checks, then
    enable content and history sync.
 6. Users sign in to the replica with their source credentials (see Peer Login
-   below). After a user's first sign-in, map that user in Server Sync so their
-   history and settings sync.
+   below). A new replica user starts with Jellyfin's default policy, which
+   includes access to all libraries. After a user's first sign-in, map that
+   user in Server Sync so their policy, history, and settings sync, or restrict
+   them in the dashboard.
 
 The `replica` module seeds Server Sync with a 50 GiB link cache, 30-day
 retention, two episodes ahead, and a 5 MB/s download limit, only when Server
@@ -129,10 +134,13 @@ loopback addresses; otherwise every Peer Login sign-in is refused.
   switch one to source credentials, set **Authentication Provider** to Peer
   Login in the user's dashboard profile. Their current password stays valid
   during outages until their next sign-in that reaches the source.
+- **Revoking access:** disabling or deleting a user on the source refuses their
+  later sign-ins that reach the source. Their replica sessions and cached
+  password stay valid, so disable or delete the replica user as well.
 - **Local accounts:** a replica account that uses another provider, such as the
   setup-wizard administrator, never accepts source credentials, even if a
   source user has the same name.
 
 Each sign-in opens a source session and the replica ends it immediately. If the
 source becomes unreachable between those two steps, the session stays on the
-source until removed there.
+source until that user's next replica sign-in that reaches it.

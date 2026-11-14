@@ -31,7 +31,7 @@
         # Building the plugin runs its unit tests.
         plugin = self.packages.${pkgs.stdenv.hostPlatform.system}.jellyfin-plugin-peer-login;
         modules = import ./nix/tests/modules.nix { inherit nixpkgs pkgs; };
-        plugin-install = import ./nix/tests/plugin-install.nix { inherit pkgs; };
+        scripts = import ./nix/tests/scripts.nix { inherit pkgs; };
       });
 
       # Heavy checks stay out of `checks`; `just verify` and CI on main build them.

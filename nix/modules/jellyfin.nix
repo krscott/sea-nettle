@@ -24,6 +24,14 @@ let
     </NetworkConfiguration>
   '';
 
+  networkConfig = "${jellyfin.configDir}/network.xml";
+
+  checkNetwork = pkgs.writeShellApplication {
+    name = "jellyfin-check-network";
+    runtimeInputs = [ pkgs.libxml2 ];
+    text = builtins.readFile ./check-network.sh;
+  };
+
   checkMedia = pkgs.writeShellScript "jellyfin-check-media" ''
     if [ ! -d ${lib.escapeShellArg media} ]; then
       echo ${lib.escapeShellArg "Media directory ${media} is absent. Mount it before starting Jellyfin."} >&2
@@ -79,6 +87,10 @@ in
         message = "sea-nettle.jellyfin keeps Jellyfin's own ports closed; reach it through localhost or sea-nettle.jellyfin.servePort.";
       }
       {
+        assertion = !jellyfin.hardwareAcceleration.enable;
+        message = "sea-nettle.jellyfin hides devices from Jellyfin, so hardware transcoding cannot work; disable services.jellyfin.hardwareAcceleration.";
+      }
+      {
         assertion = cfg.servePort != null -> config.services.tailscale.enable;
         message = "sea-nettle.jellyfin.servePort needs services.tailscale.enable.";
       }
@@ -87,7 +99,7 @@ in
     services.jellyfin.enable = true;
 
     # Seed once; dashboard changes stay writable and survive activation (R-SERVER-1, R-SERVER-2).
-    systemd.tmpfiles.settings.jellyfinNetwork."${jellyfin.configDir}/network.xml".C = {
+    systemd.tmpfiles.settings.jellyfinNetwork.${networkConfig}.C = {
       argument = toString initialNetwork;
       mode = "0600";
       inherit (jellyfin) user group;
@@ -102,7 +114,11 @@ in
       };
       unitConfig.RequiresMountsFor = lib.optional (media != null) media;
       serviceConfig = {
-        ExecStartPre = lib.optional (media != null) checkMedia;
+        # Existing configuration is never overwritten, so check it (R-SERVER-1).
+        ExecStartPre = [
+          "${lib.getExe checkNetwork} ${lib.escapeShellArg networkConfig}"
+        ]
+        ++ lib.optional (media != null) checkMedia;
         # An empty root exposes only the paths below, even when the service user owns other data.
         TemporaryFileSystem = [ "/:ro" ];
         # Mount fresh proc inside a private PID namespace, not host /proc.

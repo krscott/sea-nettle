@@ -39,7 +39,18 @@ internal sealed class Harness
         });
         UserManager.UpdateUserAsync(Arg.Any<User>()).Returns(call =>
         {
+            if (FailUpdates)
+            {
+                throw new InvalidOperationException("database is locked");
+            }
+
             Updates.Add(call.Arg<User>().Username);
+            return Task.CompletedTask;
+        });
+        UserManager.DeleteUserAsync(Arg.Any<Guid>()).Returns(call =>
+        {
+            var user = _users.Values.Single(u => u.Id == call.Arg<Guid>());
+            _users.Remove(user.Username);
             return Task.CompletedTask;
         });
     }
@@ -52,13 +63,16 @@ internal sealed class Harness
 
     public List<string> Updates { get; } = [];
 
+    /// <summary>Gets or sets a value indicating whether saving a user fails.</summary>
+    public bool FailUpdates { get; set; }
+
     public string? SourceUrl { get; set; } = "https://source.example/jellyfin";
 
     public PeerAuthenticationProvider Provider => new(
         () => SourceUrl,
         () => UserManager,
         Crypto,
-        new FakeHttpClientFactory(Source),
+        new HttpClient(Source, disposeHandler: false),
         NullLogger<PeerAuthenticationProvider>.Instance);
 
     public User? Find(string username) => _users.GetValueOrDefault(username);
@@ -97,11 +111,6 @@ internal sealed class FakeCrypto : ICryptoProvider
     public byte[] GenerateSalt(int length) => new byte[length];
 }
 
-internal sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
-{
-    public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
-}
-
 /// <summary>
 /// A scripted source server that records every request it receives.
 /// </summary>
@@ -130,6 +139,11 @@ public sealed class FakeSource : HttpMessageHandler
     }
 
     public void Respond(HttpStatusCode status) => _signIn = () => new HttpResponseMessage(status);
+
+    public void RespondOk(string body) => _signIn = () => new HttpResponseMessage(HttpStatusCode.OK)
+    {
+        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+    };
 
     public void Fail(Exception exception) => _signIn = () => throw exception;
 

@@ -1,9 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Threading.Tasks;
-using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
-using Jellyfin.Database.Implementations.Enums;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
@@ -29,20 +27,20 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     /// <param name="sourceUrl">Reads the configured source URL.</param>
     /// <param name="userManager">Resolves the user manager, which itself depends on authentication providers.</param>
     /// <param name="crypto">Creates and verifies password hashes.</param>
-    /// <param name="httpClientFactory">Creates source HTTP clients.</param>
+    /// <param name="httpClient">Sends requests to the source; it must not follow redirects (see <see cref="SourceClient.CreateHandler"/>).</param>
     /// <param name="logger">Logger.</param>
     public PeerAuthenticationProvider(
         Func<string?> sourceUrl,
         Func<IUserManager> userManager,
         ICryptoProvider crypto,
-        IHttpClientFactory httpClientFactory,
+        HttpClient httpClient,
         ILogger<PeerAuthenticationProvider> logger)
     {
         _sourceUrl = sourceUrl;
         _userManager = userManager;
         _crypto = crypto;
         _logger = logger;
-        _source = new SourceClient(httpClientFactory, logger);
+        _source = new SourceClient(httpClient, logger);
     }
 
     /// <summary>
@@ -114,18 +112,13 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     {
         var userManager = _userManager();
         var user = resolvedUser ?? userManager.GetUserByName(sourceUsername);
-        var changed = false;
 
         if (user is null)
         {
-            // R-LOGIN-1
-            user = await userManager.CreateUserAsync(sourceUsername).ConfigureAwait(false);
-            user.AuthenticationProviderId = ProviderId;
-            user.SetPermission(PermissionKind.IsAdministrator, false); // R-LOGIN-6
-            changed = true;
-            LogUserCreated(user.Username);
+            return await CreateUserAsync(userManager, sourceUsername, password).ConfigureAwait(false);
         }
-        else if (!IsSourceBacked(user))
+
+        if (!IsSourceBacked(user))
         {
             // R-LOGIN-9
             throw new AuthenticationException("The account does not use Peer Login.");
@@ -135,14 +128,30 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
         {
             // R-LOGIN-3
             user.Password = _crypto.CreatePasswordHash(password).ToString();
-            changed = true;
-        }
-
-        if (changed)
-        {
             await userManager.UpdateUserAsync(user).ConfigureAwait(false);
         }
 
+        return new ProviderAuthenticationResult { Username = user.Username };
+    }
+
+    private async Task<ProviderAuthenticationResult> CreateUserAsync(IUserManager userManager, string username, string password)
+    {
+        // R-LOGIN-1. Jellyfin saves new users with the default provider and no password, which signs in
+        // with an empty password, so a user that cannot be completed must not remain.
+        var user = await userManager.CreateUserAsync(username).ConfigureAwait(false);
+        try
+        {
+            user.AuthenticationProviderId = ProviderId;
+            user.Password = _crypto.CreatePasswordHash(password).ToString();
+            await userManager.UpdateUserAsync(user).ConfigureAwait(false);
+        }
+        catch
+        {
+            await userManager.DeleteUserAsync(user.Id).ConfigureAwait(false);
+            throw;
+        }
+
+        LogUserCreated(user.Username);
         return new ProviderAuthenticationResult { Username = user.Username };
     }
 

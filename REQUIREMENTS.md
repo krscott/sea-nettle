@@ -41,8 +41,8 @@ do not migrate or backfill unrelated requirements.
   even when it has an earlier password cached for that user.
 
   Rationale: The source is the authority for passwords. A password that was
-  changed or revoked on the source must stop working on the replica as soon as
-  the source can say so.
+  changed or revoked on the source must stop working for replica sign-ins as
+  soon as the source can say so.
 
 - **R-LOGIN-3** [test] While the source is unreachable, a user who signed in to
   the replica before can sign in with the last password that the source accepted
