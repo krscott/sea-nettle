@@ -27,20 +27,31 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     /// <param name="sourceUrl">Reads the configured source URL.</param>
     /// <param name="userManager">Resolves the user manager, which itself depends on authentication providers.</param>
     /// <param name="crypto">Creates and verifies password hashes.</param>
-    /// <param name="httpClient">Sends requests to the source; it must not follow redirects (see <see cref="SourceClient.CreateHandler"/>).</param>
     /// <param name="logger">Logger.</param>
     public PeerAuthenticationProvider(
         Func<string?> sourceUrl,
         Func<IUserManager> userManager,
         ICryptoProvider crypto,
-        HttpClient httpClient,
+        ILogger<PeerAuthenticationProvider> logger)
+        : this(sourceUrl, userManager, crypto, SourceClient.CreateHandler(), logger)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PeerAuthenticationProvider"/> class with a test transport.
+    /// </summary>
+    internal PeerAuthenticationProvider(
+        Func<string?> sourceUrl,
+        Func<IUserManager> userManager,
+        ICryptoProvider crypto,
+        HttpMessageHandler sourceTransport,
         ILogger<PeerAuthenticationProvider> logger)
     {
         _sourceUrl = sourceUrl;
         _userManager = userManager;
         _crypto = crypto;
         _logger = logger;
-        _source = new SourceClient(httpClient, logger);
+        _source = new SourceClient(new HttpClient(sourceTransport, disposeHandler: false), logger);
     }
 
     /// <summary>
@@ -137,17 +148,18 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     private async Task<ProviderAuthenticationResult> CreateUserAsync(IUserManager userManager, string username, string password)
     {
         // R-LOGIN-1. Jellyfin saves new users with the default provider and no password, which signs in
-        // with an empty password, so a user that cannot be completed must not remain.
+        // with an empty password. Hash first to keep that window short, and never leave such a user behind.
+        var hash = _crypto.CreatePasswordHash(password).ToString();
         var user = await userManager.CreateUserAsync(username).ConfigureAwait(false);
         try
         {
             user.AuthenticationProviderId = ProviderId;
-            user.Password = _crypto.CreatePasswordHash(password).ToString();
+            user.Password = hash;
             await userManager.UpdateUserAsync(user).ConfigureAwait(false);
         }
         catch
         {
-            await userManager.DeleteUserAsync(user.Id).ConfigureAwait(false);
+            await DeleteIncompleteUserAsync(userManager, user).ConfigureAwait(false);
             throw;
         }
 
@@ -155,11 +167,28 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
         return new ProviderAuthenticationResult { Username = user.Username };
     }
 
+    private async Task DeleteIncompleteUserAsync(IUserManager userManager, User user)
+    {
+        try
+        {
+            await userManager.DeleteUserAsync(user.Id).ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // The caller rethrows the original failure.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogIncompleteUserLeft(ex, user.Username);
+        }
+    }
+
     private bool MatchesCachedPassword(User user, string password) =>
         user.Password is not null && _crypto.Verify(PasswordHash.Parse(user.Password), password);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Peer Login refuses all sign-ins: set an HTTPS or loopback source URL in the plugin settings")]
     private partial void LogInvalidSourceUrl();
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "User {Username} was left without a password and signs in with an empty one; delete it in the dashboard")]
+    private partial void LogIncompleteUserLeft(Exception exception, string username);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Created source-backed user {Username}")]
     private partial void LogUserCreated(string username);

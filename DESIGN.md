@@ -14,7 +14,7 @@ NixOS modules package the server setup and the plugins.
 | `plugin/Jellyfin.Plugin.PeerLogin.Tests/` | Plugin unit tests (xUnit, faked source HTTP and user store) |
 | `plugin/package.nix`, `plugin/deps.json` | Nix package and its NuGet lock file |
 | `nix/modules/` | NixOS modules and their operator docs (`README.md`) |
-| `nix/tests/` | Module eval tests, the install-script test, and the VM test |
+| `nix/tests/` | Module eval tests, script tests, and the VM test |
 
 ## Jellyfin version
 
@@ -85,9 +85,11 @@ Login.
 
 Jellyfin saves a new user with the default provider and no password before the
 provider can set either, and the default provider accepts an empty password for
-such a user. The provider sets both in the next save and deletes the user if that
-save fails. A crash between the two saves, or a concurrent empty-password
-sign-in within those milliseconds, could still use the incomplete account.
+such a user. The provider hashes the password first, sets both in the next save,
+and deletes the user if that save fails; if the delete fails too, it logs a
+critical error naming the user. A crash between the two saves, or a concurrent
+empty-password sign-in during that one save, could still use the incomplete
+account.
 
 `UserManager` holds a per-user lock while it calls the provider; unknown
 usernames all share one lock key, so a hanging source delays every first
@@ -159,10 +161,12 @@ Enables `services.jellyfin` in a sandbox:
   outside the sandbox.
 
 Network configuration is seeded once with a systemd-tmpfiles `C` rule: HTTP
-port 8096 on 127.0.0.1, IPv6 and auto-discovery off. The file stays writable
-(R-SERVER-2). Because an existing file is never overwritten, `check-network.sh`
-refuses to start Jellyfin unless the file binds only 127.0.0.1 on port 8096
-with HTTPS and auto-discovery off (R-SERVER-1). Evaluation fails if
+port 8096 on 127.0.0.1, IPv6, auto-discovery and virtual-interface filtering
+off. The file stays writable (R-SERVER-2). Because an existing file is never
+overwritten, `check-network.sh` refuses to start Jellyfin unless the file binds
+only 127.0.0.1 on port 8096 with HTTPS and auto-discovery off (R-SERVER-1). It
+also requires IPv4 on and virtual-interface filtering off: Jellyfin binds every
+interface when its filters leave no address. Evaluation fails if
 `services.jellyfin.openFirewall` is set (R-SERVER-1).
 
 `servePort` (nullable) adds `jellyfin-serve`, which publishes
@@ -173,7 +177,9 @@ Funnel uses, and on stop removes only its own handler.
 ### `jellyfin-plugins`
 
 `plugins` maps a plugin directory name to a payload directory (assemblies and
-`meta.json`). Before every start, `install-plugin.sh` makes
+`meta.json`), keyed by the plugin's manifest name; the script refuses any other
+key, because Jellyfin matches plugin copies by name and the script deletes
+files. Before every start, `install-plugin.sh` makes
 `${dataDir}/plugins/<name>` hold exactly the payload's files and rewrites
 `meta.json` from the payload with `autoUpdate = false` (R-SERVER-3). It also
 deletes `<name>_<version>` directories, where a dashboard catalog install would

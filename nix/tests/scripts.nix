@@ -10,7 +10,7 @@ let
       echo ${version} >"$out/lib/Helper.dll"
       cat >"$out/meta.json" <<'EOF'
       ${builtins.toJSON {
-        name = "Example";
+        name = "Example Plugin";
         inherit version;
         status = "Active";
         autoUpdate = true;
@@ -29,7 +29,8 @@ let
     '';
   localhost = "<LocalNetworkAddresses><string>127.0.0.1</string></LocalNetworkAddresses>";
   port = "<InternalHttpPort>8096</InternalHttpPort>";
-  off = "<EnableHttps>false</EnableHttps><AutoDiscovery>false</AutoDiscovery>";
+  off = "<EnableIPv4>true</EnableIPv4><IgnoreVirtualInterfaces>false</IgnoreVirtualInterfaces><EnableHttps>false</EnableHttps><AutoDiscovery>false</AutoDiscovery>";
+  filters = "<EnableIPv4>true</EnableIPv4><IgnoreVirtualInterfaces>false</IgnoreVirtualInterfaces>";
 in
 pkgs.runCommand "script-tests"
   {
@@ -45,6 +46,12 @@ pkgs.runCommand "script-tests"
     check_network() { bash ${../modules/check-network.sh} "$@"; }
     dir="$TMPDIR/plugins/Example Plugin"
     meta="$dir/meta.json"
+
+    # The directory must carry the manifest name, because the script deletes files.
+    if install_plugin "$TMPDIR/plugins/.." ${payload "1.0.0.0"} 2>/dev/null; then
+      echo "accepted a mismatched plugin directory" >&2
+      exit 1
+    fi
 
     # R-SERVER-3: a fresh install and a later start both restore the pinned files.
     install_plugin "$dir" ${payload "1.0.0.0"}
@@ -90,8 +97,11 @@ pkgs.runCommand "script-tests"
       ${network "<LocalNetworkAddresses><string>0.0.0.0</string></LocalNetworkAddresses>${port}${off}"} \
       ${network "<LocalNetworkAddresses><string>127.0.0.1</string><string>192.0.2.1</string></LocalNetworkAddresses>${port}${off}"} \
       ${network "${localhost}<InternalHttpPort>8097</InternalHttpPort>${off}"} \
-      ${network "${localhost}${port}<EnableHttps>true</EnableHttps><AutoDiscovery>false</AutoDiscovery>"} \
-      ${network "${localhost}${port}<EnableHttps>false</EnableHttps><AutoDiscovery>true</AutoDiscovery>"} \
+      ${network "${localhost}${port}${filters}<EnableHttps>true</EnableHttps><AutoDiscovery>false</AutoDiscovery>"} \
+      ${network "${localhost}${port}${filters}<EnableHttps>false</EnableHttps><AutoDiscovery>true</AutoDiscovery>"} \
+      ${network "${localhost}${port}<EnableIPv4>false</EnableIPv4><IgnoreVirtualInterfaces>false</IgnoreVirtualInterfaces><AutoDiscovery>false</AutoDiscovery>"} \
+      ${network "${localhost}${port}<EnableIPv4>true</EnableIPv4><IgnoreVirtualInterfaces>true</IgnoreVirtualInterfaces><AutoDiscovery>false</AutoDiscovery>"} \
+      ${network "${localhost}${port}<EnableIPv4>true</EnableIPv4><AutoDiscovery>false</AutoDiscovery>"} \
       "$TMPDIR/missing.xml"; do
       if check_network "$bad" 2>/dev/null; then
         echo "accepted $bad" >&2

@@ -49,6 +49,11 @@ internal sealed class Harness
         });
         UserManager.DeleteUserAsync(Arg.Any<Guid>()).Returns(call =>
         {
+            if (FailDeletes)
+            {
+                throw new InvalidOperationException("delete failed");
+            }
+
             var user = _users.Values.Single(u => u.Id == call.Arg<Guid>());
             _users.Remove(user.Username);
             return Task.CompletedTask;
@@ -66,13 +71,16 @@ internal sealed class Harness
     /// <summary>Gets or sets a value indicating whether saving a user fails.</summary>
     public bool FailUpdates { get; set; }
 
+    /// <summary>Gets or sets a value indicating whether deleting a user fails.</summary>
+    public bool FailDeletes { get; set; }
+
     public string? SourceUrl { get; set; } = "https://source.example/jellyfin";
 
     public PeerAuthenticationProvider Provider => new(
         () => SourceUrl,
         () => UserManager,
         Crypto,
-        new HttpClient(Source, disposeHandler: false),
+        Source,
         NullLogger<PeerAuthenticationProvider>.Instance);
 
     public User? Find(string username) => _users.GetValueOrDefault(username);

@@ -41,8 +41,8 @@ in
     type = lib.types.attrsOf lib.types.package;
     default = { };
     description = ''
-      Pinned plugin payloads, keyed by plugin directory name. Each payload is a
-      directory with the plugin assemblies and its `meta.json`.
+      Pinned plugin payloads, keyed by the plugin's manifest name. Each payload
+      is a directory with the plugin assemblies and its `meta.json`.
     '';
   };
 

@@ -85,18 +85,20 @@ public class PeerAuthenticationProviderTests
 
     // R-LOGIN-2
     [Theory]
-    [InlineData("<html>not json</html>")]
-    [InlineData("""{"User":{"Name":"Alice"}}""")]
-    [InlineData("""{"AccessToken":"token"}""")]
-    [InlineData("""{"User":{"Name":""},"AccessToken":"token"}""")]
-    public async Task UnusableSourceAnswerRefusesTheCachedPassword(string body)
+    [InlineData("<html>not json</html>", 0)]
+    [InlineData("""{"User":{"Name":"Alice"}}""", 0)]
+    [InlineData("""{"AccessToken":"source-token"}""", 1)]
+    [InlineData("""{"User":{"Name":""},"AccessToken":"source-token"}""", 1)]
+    public async Task UnusableSourceAnswerRefusesTheCachedPassword(string body, int logouts)
     {
         var harness = new Harness();
         harness.AddUser("Alice", PeerProviderId, "secret");
         harness.Source.RespondOk(body);
 
         await Assert.ThrowsAsync<AuthenticationException>(() => harness.SignIn("Alice", "secret"));
-        Assert.Empty(harness.Source.Logouts);
+
+        // R-LOGIN-8: any returned token is logged out.
+        Assert.Equal(logouts, harness.Source.Logouts.Count());
     }
 
     // R-LOGIN-3
@@ -256,14 +258,25 @@ public class PeerAuthenticationProviderTests
     [Fact]
     public async Task UserThatCannotBeSavedIsRemoved()
     {
+        // A half-created user would sign in with an empty password through the default provider.
         var harness = new Harness { FailUpdates = true };
         harness.Source.Accept("Alice");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => harness.SignIn("Alice", "secret"));
 
-        // A half-created user would sign in with an empty password through the default provider.
         Assert.Null(harness.Find("Alice"));
         Assert.Single(harness.Source.Logouts);
+    }
+
+    [Fact]
+    public async Task FailedCleanupKeepsTheOriginalError()
+    {
+        var harness = new Harness { FailUpdates = true, FailDeletes = true };
+        harness.Source.Accept("Alice");
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.SignIn("Alice", "secret"));
+
+        Assert.Equal("database is locked", error.Message);
     }
 
     // R-LOGIN-9

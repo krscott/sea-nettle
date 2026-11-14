@@ -40,15 +40,17 @@ Jellyfin runs as `services.jellyfin.user` in an empty read-only filesystem. It
 sees the Nix store, basic name-service files, the system CA bundle, its own
 writable data, configuration, log and cache directories, and
 `sea-nettle.jellyfin.mediaDirectory` read-only. It has no devices, so
-hardware transcoding is not supported. If the media directory is absent, Jellyfin fails to start with a
-message; mount the media and restart it.
+hardware transcoding is not supported. If the media directory is absent,
+Jellyfin fails to start with a message; mount the media and restart it.
 
 Configuration stays writable. The network configuration is seeded once: HTTP
-port 8096 on 127.0.0.1, automatic discovery off. Jellyfin refuses to start
-unless `network.xml` keeps those values with HTTPS off; `jellyfin-serve`
-proxies to `http://127.0.0.1:8096`. On a server that already has a
-`network.xml`, edit it to match, or delete it and run activation to reseed it. The firewall stays closed
-to Jellyfin's ports, and setting `services.jellyfin.openFirewall` fails
+port 8096 on 127.0.0.1, automatic discovery and **Ignore virtual interfaces**
+off. Jellyfin refuses to start unless `network.xml` keeps those values with
+IPv4 on and HTTPS off, so a dashboard network change that would expose it stops
+the server instead; the journal names the problem. `jellyfin-serve` proxies to
+`http://127.0.0.1:8096`. On a server that already has a `network.xml`, edit it
+to match, or delete it and run activation to reseed it. The firewall stays
+closed to Jellyfin's ports, and setting `services.jellyfin.openFirewall` fails
 evaluation.
 
 With `servePort` set, `jellyfin-serve` publishes Jellyfin on that tailnet HTTPS
@@ -59,13 +61,13 @@ requires its own sign-in.
 
 ## Plugins
 
-Each start replaces the files in `${dataDir}/plugins/<name>` with the pinned
-payload, sets `autoUpdate` to false, and keeps a dashboard **Disable**. A
-dashboard uninstall is undone on the next start, and failed loads are retried.
-Another version installed from the dashboard catalog is deleted on the next
-start. To uninstall a
-plugin, remove it from the configuration, rebuild, and then uninstall it in the
-dashboard.
+Plugins are keyed by their manifest name, such as `"Server Sync"`. Each start
+replaces the files in `${dataDir}/plugins/<name>` with the pinned payload, sets
+`autoUpdate` to false, and keeps a dashboard **Disable**. A dashboard uninstall
+is undone on the next start, and failed loads are retried. Another version
+installed from the dashboard catalog is deleted on the next start. To uninstall
+a plugin, remove it from the configuration, rebuild, and then uninstall it in
+the dashboard.
 
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.

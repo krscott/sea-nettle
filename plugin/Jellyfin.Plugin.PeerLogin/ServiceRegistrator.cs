@@ -1,4 +1,3 @@
-using System.Net.Http;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Library;
@@ -22,7 +21,6 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             // The user manager depends on all authentication providers, so resolve it lazily.
             () => services.GetRequiredService<IUserManager>(),
             services.GetRequiredService<ICryptoProvider>(),
-            new HttpClient(SourceClient.CreateHandler()),
             services.GetRequiredService<ILogger<PeerAuthenticationProvider>>()));
     }
 }

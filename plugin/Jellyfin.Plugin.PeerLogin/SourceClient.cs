@@ -104,16 +104,24 @@ internal sealed partial class SourceClient
 
             if (!response.IsSuccessStatusCode)
             {
-                LogUnexpectedResponse(response.StatusCode.ToString());
+                var location = response.Headers.Location is { } target ? $" to {target}" : string.Empty;
+                LogUnexpectedResponse($"{response.StatusCode}{location}");
                 return new SourceResult.Rejected();
             }
 
             var body = await response.Content
                 .ReadFromJsonAsync<AuthenticateResponse>(timeout.Token)
                 .ConfigureAwait(false);
-            if (string.IsNullOrEmpty(body?.User?.Name) || string.IsNullOrEmpty(body.AccessToken))
+            if (string.IsNullOrEmpty(body?.AccessToken))
             {
-                LogUnexpectedResponse("missing user or token");
+                LogUnexpectedResponse("missing token");
+                return new SourceResult.Rejected();
+            }
+
+            if (string.IsNullOrEmpty(body.User?.Name))
+            {
+                LogUnexpectedResponse("missing user name");
+                await LogoutAsync(source, body.AccessToken).ConfigureAwait(false);
                 return new SourceResult.Rejected();
             }
 

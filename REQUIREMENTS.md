@@ -97,10 +97,12 @@ do not migrate or backfill unrelated requirements.
   passwords and session tokens in cleartext and widens the attack surface.
 
 - **R-SERVER-2** [test] Configuration changes made in the dashboard survive
-  service restarts and system activation.
+  service restarts and system activation. A network change that breaks
+  R-SERVER-1 stops Jellyfin from starting instead.
 
   Rationale: Administrators configure libraries, plugins, and peer credentials
-  in the dashboard. A rebuild must not discard that work.
+  in the dashboard. A rebuild must not discard that work, and a silent reset of
+  a network change would hide it.
 
 - **R-SERVER-3** [test] Each service start restores every Nix-pinned plugin to
   its pinned version.

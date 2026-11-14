@@ -6,6 +6,14 @@ set -euo pipefail
 plugin_dir=$1
 payload=$2
 
+# Jellyfin matches plugin copies by manifest name, and this script deletes files, so the
+# directory must be named after the plugin.
+name=$(jq -r .name "$payload/meta.json")
+if [[ ${plugin_dir##*/} != "$name" ]]; then
+    echo "Plugin directory '${plugin_dir##*/}' must match the plugin's manifest name '$name'." >&2
+    exit 1
+fi
+
 # A dashboard catalog install of another version goes to "<name>_<version>", and Jellyfin
 # would load it instead of the pin (R-SERVER-3).
 rm -rf -- "$plugin_dir"_[0-9]*

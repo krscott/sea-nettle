@@ -21,6 +21,7 @@ let
       <EnableIPv6>false</EnableIPv6>
       <LocalNetworkAddresses><string>127.0.0.1</string></LocalNetworkAddresses>
       <AutoDiscovery>false</AutoDiscovery>
+      <IgnoreVirtualInterfaces>false</IgnoreVirtualInterfaces>
     </NetworkConfiguration>
   '';
 
