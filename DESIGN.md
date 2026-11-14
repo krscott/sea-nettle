@@ -183,8 +183,9 @@ starts, and `jellyfin-serve` requires it. The script exits at once if
 Jellyfin's startup or depends on its API, including its Base URL. Otherwise it
 waits up to 5 minutes for `/Branding/Configuration`, which only the fully
 started server answers; during startup, a temporary setup server always
-reports the wizard incomplete on `/System/Info/Public`. It then does nothing if
-`/System/Info/Public` reports the wizard complete. Otherwise it calls
+reports the wizard incomplete on `/System/Info/Public`. It then reads
+`system.xml` again, because Jellyfin's startup marks the wizard complete before
+it answers if an administrator with a password exists. Otherwise it calls
 `GET /Startup/User`, which creates the first user, then `POST /Startup/User`
 with the name and password, and `POST /Startup/Complete`. It skips the
 remote-access step, which would rewrite `network.xml`, and keeps Jellyfin's

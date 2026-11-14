@@ -203,7 +203,7 @@ in
         User = jellyfin.user;
         Group = jellyfin.group;
         ProtectSystem = "strict";
-        ProtectHome = true;
+        ProtectHome = "read-only";
         PrivateTmp = true;
         # The script bounds its own waits; this is a backstop.
         TimeoutStartSec = "10min";

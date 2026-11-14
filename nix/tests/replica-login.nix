@@ -174,7 +174,7 @@ in
         restart_jellyfin(source)
         assert wizard_completed(source)
         source.succeed("systemctl start jellyfin-serve.service")
-        assert "already complete" in admin_log(source)
+        assert "system.xml marks the startup wizard complete" in admin_log(source)
         source_admin = sign_in(source, "source-admin", "admin-pw")
 
     with subtest("R-SERVER-6: a new server gets the configured administrator"):
@@ -193,6 +193,7 @@ in
         admin_done = unit_time(source, "jellyfin-initial-admin.service", "ActiveEnterTimestampMonotonic")
         serve_start = unit_time(source, "jellyfin-serve.service", "ExecMainStartTimestampMonotonic")
         assert serve_before < jellyfin_start < admin_done <= serve_start, (serve_before, jellyfin_start, admin_done, serve_start)
+        assert admin_log(source).count("system.xml marks the startup wizard complete") >= 2
         source_admin = sign_in(source, "source-admin", "admin-pw")
 
     alice = api(source, "POST", "/Users/New", {"Name": "Alice", "Password": "alice-1"}, token=source_admin)
@@ -285,7 +286,7 @@ in
         assert config["SourceUrl"] == "https://source/", config
         sign_in(replica, "alice", "alice-2")
         replica.wait_for_unit("jellyfin-initial-admin.service")
-        assert admin_log(replica).count("already complete") >= 2
+        assert admin_log(replica).count("system.xml marks the startup wizard complete") >= 2
         sign_in(replica, "replica-admin", "changed-pw", expect=401)
 
     with subtest("R-SERVER-5: a plugin disabled in the dashboard stays disabled"):

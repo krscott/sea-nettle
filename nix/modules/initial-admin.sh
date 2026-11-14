@@ -34,15 +34,21 @@ expect() {
     fi
 }
 
-already_complete() {
-    echo "The Jellyfin startup wizard is already complete; leaving users unchanged."
-    exit 0
+# Whether system.xml marks the startup wizard complete. A new server may have no file yet.
+wizard_complete() {
+    local flag
+    [[ -e $system_config ]] || return 1
+    if ! flag=$(xmllint --xpath 'string(/ServerConfiguration/IsStartupWizardCompleted)' "$system_config"); then
+        echo "Cannot read $system_config; treating the startup wizard as incomplete." >&2
+        return 1
+    fi
+    [[ $flag == true ]]
 }
 
-# A claimed server never waits for Jellyfin's startup. Without a readable flag, ask Jellyfin.
-wizard=$(xmllint --xpath 'string(/ServerConfiguration/IsStartupWizardCompleted)' "$system_config" 2>/dev/null) || true
-if [[ $wizard == true ]]; then
-    already_complete
+# A claimed server never waits for Jellyfin's startup or depends on its API.
+if wizard_complete; then
+    echo "system.xml marks the startup wizard complete; leaving users unchanged."
+    exit 0
 fi
 
 # While Jellyfin starts, a setup server answers 503 to most requests, but claims the wizard is
@@ -50,18 +56,17 @@ fi
 # completes. Wait for an endpoint that only the started server answers.
 request GET /Branding/Configuration --retry 150 --retry-delay 2 --retry-connrefused --retry-max-time 300
 if [[ $status == 503 ]]; then
-    fatal "Jellyfin did not finish starting within 5 minutes. Once it has, start jellyfin-initial-admin.service."
+    fatal "Jellyfin did not finish starting within 5 minutes. Once it has, start" \
+        "jellyfin-serve.service, or jellyfin-initial-admin.service without servePort."
 fi
 expect 200
-request GET /System/Info/Public
-expect 200
-completed=$(jq .StartupWizardCompleted "$response") ||
-    fatal "Jellyfin answered $call with invalid JSON: $(<"$response")"
-case $completed in
-true) already_complete ;;
-false) ;;
-*) fatal "Jellyfin answered $call without a StartupWizardCompleted flag: $(<"$response")" ;;
-esac
+
+# Jellyfin's startup completes the wizard, and saves system.xml, before the request above
+# succeeds if an administrator with a password exists.
+if wizard_complete; then
+    echo "Jellyfin completed the startup wizard while starting; leaving users unchanged."
+    exit 0
+fi
 
 # Creates the first user if none exists yet.
 request GET /Startup/User
@@ -72,10 +77,9 @@ jq -n --arg name "$name" --rawfile password "$password_file" \
     '{Name: $name, Password: ($password | sub("\n+$"; ""))}' |
     request POST /Startup/User -H 'Content-Type: application/json' --data-binary @-
 if [[ $status == 403 ]]; then
-    fatal "Jellyfin's first user already has a password, but the startup wizard is incomplete." \
-        "If an earlier run of this unit logged \"Set the password for $name\", restart" \
-        "jellyfin.service to complete the wizard. Otherwise someone else claimed this server;" \
-        "see \"Initial administrator\" in sea-nettle's nix/modules/README.md."
+    fatal "Jellyfin's first user already has a password, but the startup wizard is incomplete:" \
+        "an earlier run was interrupted, or someone else claimed this server." \
+        "See \"Initial administrator\" in sea-nettle's nix/modules/README.md."
 fi
 expect 204
 echo "Set the password for $name; completing the startup wizard."
