@@ -27,7 +27,7 @@
       in
       {
         packages = {
-          "flake-start" = package;
+          "sea-nettle" = package;
           default = package;
         };
 
