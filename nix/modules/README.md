@@ -78,8 +78,8 @@ the claim.
 
 `passwordFile` is a runtime path outside the Nix store, such as a sops-nix or
 agenix secret; it can be readable by root only. Trailing newlines in it are
-ignored, and an empty file is refused. The password never reaches the Nix
-store, command lines, or the journal.
+ignored, and Jellyfin refuses an empty password. The password never reaches
+the Nix store, command lines, or the journal.
 
 Setup runs once. When the wizard is complete, the unit does nothing, so later
 changes to `name` or the password file have no effect; manage the account in
@@ -87,15 +87,17 @@ the dashboard. Keep the file in place anyway: the unit loads it on every boot.
 Without it, the journal shows
 `jellyfin-initial-admin.service: Failed to set up credentials: No such file or directory`,
 and `jellyfin-serve` stays down. Restore the file, then run
-`systemctl start jellyfin-initial-admin jellyfin-serve`.
+`systemctl start jellyfin-serve`, or `systemctl start jellyfin-initial-admin`
+without `servePort`. Use the same command if the unit reports that Jellyfin
+did not finish starting within 5 minutes.
 
 If the unit reports that Jellyfin's first user already has a password, setup
 was interrupted or someone else claimed the server first. If
-`journalctl -u jellyfin-initial-admin` shows that an earlier run set the
-password, restart `jellyfin.service`, which then completes the wizard, and run
-`systemctl start jellyfin-initial-admin jellyfin-serve`. Otherwise, stop
-Jellyfin, delete its data directory (`/var/lib/jellyfin` by default), and start
-those units again.
+`journalctl -u jellyfin-initial-admin` shows `Set the password for <name>` from
+an earlier run, restart `jellyfin.service`, which then completes the wizard,
+and start the units again. Otherwise, stop Jellyfin, delete its data directory
+(`/var/lib/jellyfin` by default), run `systemd-tmpfiles --create` to recreate
+it with the seeded configuration, and start the units again.
 
 ## Plugins
 

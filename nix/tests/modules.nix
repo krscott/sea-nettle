@@ -171,7 +171,8 @@ let
           && lib.elem "jellyfin.service" admin.after
           && admin.serviceConfig.Type == "oneshot"
           && admin.serviceConfig.RemainAfterExit
-          && admin.serviceConfig.DynamicUser
+          && admin.serviceConfig.User == config.services.jellyfin.user
+          && admin.serviceConfig.ProtectSystem == "strict"
         )
         [
           source

@@ -117,8 +117,7 @@ in
     def wait_for_jellyfin(machine):
         machine.wait_for_unit("jellyfin.service")
         machine.wait_for_open_port(8096)
-        # A setup server answers /health while Jellyfin starts; only the started server answers this.
-        machine.wait_until_succeeds("curl -sf http://127.0.0.1:8096/Branding/Configuration")
+        machine.wait_until_succeeds("curl -sf http://127.0.0.1:8096/health | grep Healthy")
 
 
     def restart_jellyfin(machine):

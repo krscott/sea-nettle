@@ -178,18 +178,22 @@ Funnel uses, and on stop removes only its own handler.
 Jellyfin's startup wizard completes, its first-time-setup policy lets any
 caller use the startup, library, and environment endpoints. The
 `jellyfin-initial-admin` oneshot runs `initial-admin.sh` after Jellyfin
-starts, and `jellyfin-serve` requires it. The script waits up to 5 minutes for
-`/Branding/Configuration`, which only the fully started server answers; during
-startup, a temporary setup server always reports the wizard incomplete on
-`/System/Info/Public`. The script then does nothing if `/System/Info/Public`
-reports the wizard complete. Otherwise it calls `GET /Startup/User`, which
-creates the first user, then `POST /Startup/User` with the name and password,
-and `POST /Startup/Complete`. It skips the remote-access step, which would rewrite
-`network.xml`, and keeps Jellyfin's default server name and language.
+starts, and `jellyfin-serve` requires it. The script exits at once if
+`system.xml` says the wizard is complete, so a claimed server never waits for
+Jellyfin's startup or depends on its API, including its Base URL. Otherwise it
+waits up to 5 minutes for `/Branding/Configuration`, which only the fully
+started server answers; during startup, a temporary setup server always
+reports the wizard incomplete on `/System/Info/Public`. It then does nothing if
+`/System/Info/Public` reports the wizard complete. Otherwise it calls
+`GET /Startup/User`, which creates the first user, then `POST /Startup/User`
+with the name and password, and `POST /Startup/Complete`. It skips the
+remote-access step, which would rewrite `network.xml`, and keeps Jellyfin's
+default server name and language.
 
-The password arrives through `LoadCredential` in a `DynamicUser` service and
-reaches curl through a pipe. `passwordFile` must be outside the Nix store, and
-the module uses it only as a string, so a path literal is never copied.
+The unit runs as the Jellyfin user, because `system.xml` is private to it,
+with a read-only file system. The password arrives through `LoadCredential`
+and reaches curl through a pipe. `passwordFile` is typed `externalPath`, so
+evaluation rejects store paths and path literals.
 
 `POST /Startup/User` answers 403 when the first user already has a password.
 The unit then fails without retrying, because that password may not be the

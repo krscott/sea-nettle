@@ -39,6 +39,7 @@ let
     runtimeInputs = [
       pkgs.curl
       pkgs.jq
+      pkgs.libxml2
     ];
     text = builtins.readFile ./initial-admin.sh;
   };
@@ -193,12 +194,17 @@ in
         RemainAfterExit = true;
         ExecStart = utils.escapeSystemdExecArgs [
           (lib.getExe initialAdmin)
+          "${jellyfin.configDir}/system.xml"
           upstream
           cfg.initialAdmin.name
         ];
-        # toString keeps the path out of the Nix store.
-        LoadCredential = "password:${toString cfg.initialAdmin.passwordFile}";
-        DynamicUser = true;
+        LoadCredential = "password:${cfg.initialAdmin.passwordFile}";
+        # Reads Jellyfin's configuration, which only its user can read, and changes nothing on disk.
+        User = jellyfin.user;
+        Group = jellyfin.group;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
         # The script bounds its own waits; this is a backstop.
         TimeoutStartSec = "10min";
       };
