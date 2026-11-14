@@ -1,5 +1,6 @@
 .direnv/
 .envrc
 .vscode/
-hello.sh
 result
+bin/
+obj/

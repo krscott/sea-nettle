@@ -1,28 +1,36 @@
 # sea-nettle
 
-Project description goes here.
+Run a regional replica Jellyfin server next to a source server. Users sign in
+to the replica with their source credentials, and
+[Server Sync](https://github.com/JPKribs/jellyfin-plugin-serversync) keeps
+content, watch history, and settings in step.
+
+The flake provides:
+
+- `packages.<system>.jellyfin-plugin-peer-login`: the Peer Login Jellyfin
+  plugin, which authenticates replica users against the source.
+- `nixosModules.jellyfin`, `jellyfin-plugins`, `server-sync`, and `replica`.
+  See [the module docs](nix/modules/README.md) for setup.
+
+`REQUIREMENTS.md` lists the guarantees, and `DESIGN.md` explains how the
+project meets them.
 
 ## Development
 
 Enter the development shell with `nix develop`, then run:
 
 ```sh
-just build
-just run
-just test
-just format
-just check
+just test         # plugin unit tests with the local .NET SDK
+just build        # Nix plugin package (runs the unit tests)
+just format       # format tracked files
+just check        # fast checks: formatting, lint, nix flake check
+just vm-test      # NixOS VM test of a source and a replica (needs KVM)
+just verify       # check + vm-test
+just update-deps  # regenerate plugin/deps.json after changing NuGet packages
 ```
 
-`just build` and `just run` use the local build path. To build or run the Nix
-package, use `nix build` or `nix run`.
-`just test` builds the local program and checks its output.
+Formatting and lint cover tracked files; stage new files with `git add` first.
+Install the formatting hook with `just install-hooks`.
 
-`just check` checks formatting, runs ShellCheck, and validates the flake without
-rewriting source files. Formatting and shell checks cover tracked files; stage
-new files with `git add` to include them.
-
-Install the formatting hook with `just install-hooks`. It formats fully staged
-files and leaves partially staged files alone.
-
-Update dependencies with `nix flake update`.
+Update Nix inputs with `nix flake update`. A Jellyfin version change fails
+evaluation until the plugin pins are reviewed.
