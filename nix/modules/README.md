@@ -147,13 +147,12 @@ sea-nettle.jellyfin.setup = {
     # Or: content = "all";
     content.whitelist = [ "Big Buck Bunny (2008)" ];
   };
+  # Created on the source when missing; mapped on the replica.
   users = {
-    alice.syncHistory = true;
-    bob = {
-      passwordFile = "/run/secrets/jellyfin-bob";
-      syncHistory = true;
-    };
+    alice = { };
+    bob.passwordFile = "/run/secrets/jellyfin-bob";
   };
+  syncHistory = true;
 };
 ```
 
@@ -174,19 +173,27 @@ replica again. The runs:
   Mappings start disabled and are enabled, with content sync, once the link
   check passes. A whitelist item is a top-level folder or file under
   `sourcePath`.
-- Users with `syncHistory` are mapped once they have signed in to the replica
-  with their source password (see Peer Login below), on the next run. History
-  sync is turned on with the first of them.
+- With an administrator source account, each spec user is mapped once they
+  have signed in to the replica with their source password (see Peer Login
+  below), on the next run. With `syncHistory`, history sync is turned on with
+  the first mapping.
 
 New libraries keep metadata, artwork, subtitles, lyrics, and trickplay in
 Jellyfin's state, not beside the media.
 
-**Sync accounts.** A limited account carries content and links only. The
-source then streams every replica user's links as its limited account. Watch
-history for other users needs the source's account to be an administrator, and
-setup refuses a spec that asks for it otherwise. With an administrator account,
-a compromised replica has administrator access to the source. Setup never
-changes an existing account's administrator rights; it reports a mismatch.
+**Sync accounts.** The source's sync account decides how links play:
+
+- Limited: content and links only. The source streams every replica user's
+  links as that account, so every replica user can play what it can see. Users
+  are not mapped, and setup refuses `syncHistory`.
+- Administrator: the source streams a link as the replica user's mapped
+  source user, with that user's library access and limits. A replica user who
+  is not in the spec's users, such as the replica's local administrator, cannot
+  play links. Watch history can sync. A compromised replica has administrator
+  access to the source.
+
+Setup never changes an existing account's administrator rights or library
+access; it reports a mismatch.
 
 **Reruns.** Run setup again at any time. It only adds what is missing and
 enables the spec's mappings; it never removes, disables, or rewrites existing
@@ -203,7 +210,8 @@ before anything changes.
 
 ### Dashboard settings
 
-Setup leaves these to the dashboard:
+Setup leaves these to the dashboard. Non-video items in a Link mapping are
+copied, not linked.
 
 - The link cache: the `replica` module seeds a 50 GiB cache, 30-day
   retention, two episodes ahead, and a 5 MB/s download limit, only when Server
@@ -214,7 +222,6 @@ Setup leaves these to the dashboard:
 - The source's link limits for the replica: streams at once, per-user limits,
   and speeds.
 - User settings and metadata sync.
-- Non-video items in a Link mapping are copied, not linked.
 
 A new replica user starts with Jellyfin's default policy, which includes access
 to all libraries. Restrict them in the dashboard if needed.
@@ -225,7 +232,7 @@ Do not copy databases between servers. To recover a broken peer, run
 ## Checking a pair
 
 `sudo sea-nettle status` checks this server's Server Sync setup and never
-changes configuration. `setup` ends with the same report. Run it on each server; each run covers one direction.
+changes configuration; `sea-nettle setup` ends with the same report. Run it on each server; each run covers one direction.
 It signs in as the initial administrator with the password in
 `initialAdmin.passwordFile`, and signs out before it exits. If the password
 was changed in the dashboard, update the file to match: each refused run counts

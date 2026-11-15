@@ -349,7 +349,15 @@ def _is_guid(value: str) -> bool:
 
 
 def unmapped_users(entries: tuple[Entry, ...], users: tuple[User, ...]) -> list[Attention]:
-    """Peer Login creates replica users on first sign-in; mapping them is a later step."""
+    """Peer Login users that an administrator's key cannot stream links or history for.
+
+    Peer Login creates replica users on first sign-in; mapping them is a later step. A
+    source that holds an administrator's key streams a link as the user the replica maps,
+    so an unmapped user cannot play links. A standard user's key streams only as its own
+    user and carries only that user's history, so mappings add nothing for it.
+    """
+    if not any(e.enabled and e.access_level.lower() != "user" for e in entries):
+        return []
     mapped = {
         normalize_id(m.local_id) for e in entries if e.enabled for m in e.user_mappings if m.enabled
     }
@@ -357,10 +365,12 @@ def unmapped_users(entries: tuple[Entry, ...], users: tuple[User, ...]) -> list[
         Attention(
             code="unmapped-user",
             subject=f"User {user.name}",
-            problem="this Peer Login user has no user mapping, so their watch history "
-            "and settings do not sync.",
-            fix=f"Under {SERVERS}, open the source's entry and map {user.name} to "
-            "their source user in step 4 Users.",
+            problem="this Peer Login user has no user mapping, so they cannot play links "
+            "from the source, and their watch history does not sync.",
+            fix=f"Add {user.name} to the users of sea-nettle's setup spec and run "
+            "`sudo sea-nettle setup` on the replica; or, under "
+            f"{SERVERS}, open the source's entry and map {user.name} to their source user in "
+            "step 4 Users.",
         )
         for user in users
         if user.peer_login and normalize_id(user.id) not in mapped

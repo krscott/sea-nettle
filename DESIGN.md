@@ -120,7 +120,8 @@ dashboard page edits it.
 These are deliberately out of scope for now:
 
 - Server Sync user mappings are not created at a user's first sign-in;
-  `sea-nettle setup` maps the spec's users on its next run.
+  `sea-nettle setup` maps the spec's users on its next run, when the source
+  account is an administrator.
 - Source lockout counts forwarded attempts, but cached-hash checks during an
   outage are limited only by the replica's own lockout policy.
 - The source's administrator flag is never mirrored.
@@ -308,7 +309,7 @@ what the command read:
 | `peer-unreachable`, `peer-not-listed`, `peer-unpaired`, `peer-link-warning` | The link check's first problem, in that order; a check with no answer within 5 minutes counts as unreachable |
 | `mapping-missing-library`, `mapping-missing-user` | A mapping names a local library or user that no longer exists |
 | `user-mapping-skipped` | A standard user's key with mappings for other users, which Server Sync skips |
-| `unmapped-user` | A Peer Login user without an enabled user mapping |
+| `unmapped-user` | A Peer Login user without an enabled user mapping, while an enabled entry's key is an administrator's: the source streams that user's links only through a mapping |
 
 Disabled entries are listed but not assessed. The exit status is 0 when
 nothing needs attention, 3 when something does, 1 when the command fails, and
@@ -319,11 +320,13 @@ nothing needs attention, 3 when something does, 1 when the command fails, and
 ### `setup`
 
 `setup` reads a spec of both servers: each server's URL and sync account, the
-libraries, and the ordinary source users. A sync account is a dedicated user on
+libraries, the ordinary source users, and whether watch history syncs. A sync
+account is a dedicated user on
 one server that the other server's entry signs in as; the spec says whether it
 is an administrator. The spec is parsed and checked as a whole first; a problem
 exits 1 before the command signs in (R-PAIR-5). The checks cover field types,
-names Jellyfin accepts, HTTPS URLs as Peer Login requires (R-LOGIN-7),
+names Jellyfin accepts (a library name must survive Jellyfin's folder-name
+rules, or Jellyfin would store it under another name), HTTPS URLs as Peer Login requires (R-LOGIN-7),
 duplicate names and paths, sync accounts that double as a spec user or as this
 server's administrator, and history sync through a limited source account.
 
@@ -345,12 +348,15 @@ a conflict with a fix, and the run builds nothing on it. Users are matched by
 name ignoring case, libraries by name, entries by server ID as Server Sync's
 `FindServerById` does, library mappings by source path, user mappings by local
 or source user, and grants by user ID. A sync account must have the
-administrator flag the spec asks for, on both servers; setup never changes it.
-An existing user's password is never read or changed.
+administrator flag the spec asks for, on both servers, and a limited one must
+not see every library; setup never changes either. An existing entry must be
+signed in as the spec's sync account with the spec's access level. An existing
+user's password is never read or changed. When the sync account is unusable,
+the run stops before the peer's part, so it adds no entry without a grant.
 
 The exceptions are what the spec asks to have on: each spec mapping is enabled
-once the replica's link check passes (R-PAIR-7), with `EnableContentSync` for
-library mappings and `EnableHistorySync` for user mappings. A rerun turns them
+once the replica's link check passes (R-PAIR-7), with `EnableContentSync`, and
+`EnableHistorySync` once a user mapping is enabled if the spec syncs history. A rerun turns them
 on again if they were turned off in the dashboard; to stop syncing a library or
 user, remove it from the spec first.
 
@@ -370,8 +376,11 @@ not changed. A new entry needs the peer's server ID, from its anonymous
 `/System/Info/Public`, and a token: Server Sync's `POST /Sync/Authenticate`
 signs in to the peer's sync account and returns it (R-PAIR-3). That sign-in
 revokes the token Server Sync got earlier for the same account, so setup
-signs in only when no entry has the peer's server ID. A token whose entry
-could not be saved stays on the peer until the next sign-in revokes it.
+signs in only when no entry has the peer's server ID, and reports a conflict
+instead when an entry has the peer's URL but another or no server ID. When the
+token is not saved as a new entry's key, because the peer's answer contradicts
+the spec, the save fails, or the run is interrupted, setup ends its session at
+the peer (R-PAIR-3); if that fails, the report says which device to remove.
 
 | Entry | Mode | Settings |
 | --- | --- | --- |
@@ -396,9 +405,11 @@ whitelist is resolved against the source's top-level items, matching an item
 at a listed path or inside a listed folder, because a movie's path is its
 video file. Server Sync finds whitelisted content by item ID and matches hints
 by path, so each filtered item carries both. A rerun adds new whitelist items
-and keeps items added in the dashboard. A spec user is mapped to the replica's
-Peer Login user with the same name once that user has signed in; a local
-replica account with that name is a conflict (R-LOGIN-9). New mappings are
+and keeps items added in the dashboard. With an administrator source account,
+each spec user is mapped to the replica's Peer Login user with the same name
+once that user has signed in, because the source streams links only for mapped
+users; a local replica account with that name is a conflict (R-LOGIN-9). With a
+limited account, no user is mapped: the fallback user streams for everyone. New mappings are
 disabled unless this run's link check passed, and a whitelist with an item the
 source lacks keeps its mapping disabled.
 

@@ -15,6 +15,7 @@ from sea_nettle.edits import (
     UserMappingWant,
     entry,
     grant,
+    has_enabled_user_mapping,
     keep_stored_keys,
     library_mapping,
     switch_on,
@@ -22,7 +23,7 @@ from sea_nettle.edits import (
 )
 from sea_nettle.model import KEPT_API_KEY, as_list, as_object
 from sea_nettle.report import Attention
-from sea_nettle.setup import whitelist_items
+from sea_nettle.setup import STATE_ONLY_OPTIONS, whitelist_items, writes_beside_media
 
 SOURCE_ID = "5c1b0c32d7d24fb2a8d1a7c09c8a4f11"
 STORED_KEY = "enc:v1:CfDJ8secretciphertext"
@@ -35,6 +36,8 @@ WANT = EntryWant(
     server_id=SOURCE_ID,
     mode="Pull",
     allow_linking=False,
+    account="replica-sync",
+    administrator=True,
     fallback_user=None,
 )
 SIGNED_IN = SignedIn(
@@ -68,6 +71,8 @@ def config(**entry_fields: object) -> JsonObject:
         "ServerId": SOURCE_ID.upper(),
         "Mode": "Pull",
         "IsEnabled": True,
+        "AuthenticatedUser": "replica-sync",
+        "AccessLevel": "Administrator",
         "LibraryMappings": [],
         "UserMappings": None,
     }
@@ -120,6 +125,12 @@ def test_keeps_an_existing_entry_matched_by_server_id() -> None:
     assert doc == before
 
 
+def test_reports_an_entry_signed_in_as_another_account() -> None:
+    # An entry from the dashboard, signed in as an administrator the spec does not name.
+    assert codes(entry(WANT, None)(config(AuthenticatedUser="admin"))) == ["conflict-entry-account"]
+    assert codes(entry(WANT, None)(config(AccessLevel="User"))) == ["conflict-entry-account"]
+
+
 def test_reports_existing_entries_that_differ() -> None:
     doc = config(Url="https://old-source", IsEnabled=False, Mode="Push")
     before = copy.deepcopy(doc)
@@ -135,14 +146,20 @@ def test_push_entry_for_a_limited_key_needs_linking_and_its_fallback_user() -> N
         server_id=SOURCE_ID,
         mode="Push",
         allow_linking=True,
+        account="source-sync",
+        administrator=False,
         fallback_user=("0f6e2d1c-4b3a-4a59-8e7d-6c5b4a392817", "replica-sync"),
     )
-    assert codes(entry(want, None)(config(Mode="Sync"))) == [
+    limited: dict[str, object] = {"AuthenticatedUser": "source-sync", "AccessLevel": "User"}
+    assert codes(entry(want, None)(config(Mode="Sync", **limited))) == [
         "conflict-entry-linking",
         "conflict-entry-fallback",
     ]
     ok = config(
-        Mode="Push", AllowLinking=True, LinkFallbackUserId="0f6e2d1c4b3a4a598e7d6c5b4a392817"
+        Mode="Push",
+        AllowLinking=True,
+        LinkFallbackUserId="0f6e2d1c4b3a4a598e7d6c5b4a392817",
+        **limited,
     )
     assert entry(want, None)(ok) == []
 
@@ -194,7 +211,9 @@ def test_whitelist_keeps_dashboard_items_and_adds_the_spec_items() -> None:
         "Path": "/srv/media/movies/BBB",
     }
     existing = {
+        "SourceLibraryId": MOVIES.source_library_id,
         "SourceRootPath": "/srv/media/movies/",
+        "LocalRootPath": MOVIES.local_path,
         "LocalLibraryId": LOCAL_LIBRARY,
         "StorageMode": "Link",
         "FilterMode": "Whitelist",
@@ -211,13 +230,18 @@ def test_whitelist_keeps_dashboard_items_and_adds_the_spec_items() -> None:
 
 def test_reports_mappings_that_differ() -> None:
     copy_mapping = {
+        "SourceLibraryId": MOVIES.source_library_id,
         "SourceRootPath": "/srv/media/movies",
+        "LocalRootPath": MOVIES.local_path,
         "LocalLibraryId": LOCAL_LIBRARY,
         "IsEnabled": False,
     }
     other_source = {"SourceRootPath": "/srv/media/other", "LocalLibraryId": LOCAL_LIBRARY}
+    # The source library was deleted and created again at the same path.
+    recreated = {**copy_mapping, "SourceLibraryId": "ffff", "StorageMode": "Link"}
+    elsewhere = {**copy_mapping, "LocalRootPath": "/old", "StorageMode": "Link"}
     filtered = {**copy_mapping, "StorageMode": "Link", "FilterMode": "Blacklist"}
-    for existing in [copy_mapping, other_source, filtered]:
+    for existing in [copy_mapping, other_source, filtered, recreated, elsewhere]:
         doc = config(LibraryMappings=[existing])
         before = copy.deepcopy(doc)
         items = library_mapping(SOURCE_ID, MOVIES, enable=True)(doc)
@@ -254,6 +278,30 @@ def test_switch_on() -> None:
         "Turned on content sync"
     ]
     assert switch_on("EnableContentSync", "content sync")(doc) == []
+
+
+def test_history_sync_waits_for_an_enabled_user_mapping() -> None:
+    edit = switch_on(
+        "EnableHistorySync", "history", when=lambda c: has_enabled_user_mapping(c, SOURCE_ID)
+    )
+    doc = config(UserMappings=[{"LocalUserId": "u", "IsEnabled": False}])
+    assert edit(doc) == []
+    servers(doc)[0]["UserMappings"] = [{"LocalUserId": "u", "IsEnabled": True}]
+    assert changes(edit(doc)) == ["Turned on history"]
+
+
+def test_writes_beside_media() -> None:
+    assert not writes_beside_media(dict(STATE_ONLY_OPTIONS))
+    # Jellyfin saves downloaded subtitles beside the media unless told otherwise.
+    assert writes_beside_media({})
+    assert not writes_beside_media({"SaveSubtitlesWithMedia": False, "MetadataSavers": None})
+    unsafe_options: list[JsonObject] = [
+        {"SaveLocalMetadata": True},
+        {"MetadataSavers": ["Nfo"]},
+        {"SaveTrickplayWithMedia": True},
+    ]
+    for unsafe in unsafe_options:
+        assert writes_beside_media({**STATE_ONLY_OPTIONS, **unsafe}), unsafe
 
 
 def test_whitelist_paths_match_items_or_their_folders() -> None:

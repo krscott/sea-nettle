@@ -45,15 +45,14 @@ let
       sourcePath = "/srv/media/movies";
       content.whitelist = [ "Clip (2020)" ];
     };
+    # Every replica user is mapped: the source streams links only for mapped users.
     users = {
-      alice.syncHistory = true;
-      bob.syncHistory = true;
-      source-admin.syncHistory = true;
-      carol = {
-        passwordFile = "/run/carol-password";
-        syncHistory = true;
-      };
+      alice = { };
+      bob = { };
+      source-admin = { };
+      carol.passwordFile = "/run/carol-password";
     };
+    syncHistory = true;
   };
 
   server = {
@@ -514,7 +513,7 @@ in
         command = command.removeprefix("exec ").replace(spec_path, "/tmp/limited-spec.json").replace('"$@"', "setup")
         before = configuration(source, source_admin)
         out = setup(source, source_admin, 1, command=command)
-        assert "nothing was changed" in out and "syncHistory for alice, bob, carol, source-admin needs" in out, out
+        assert "nothing was changed" in out and "syncHistory needs source.syncAccount.administrator = true" in out, out
         assert configuration(source, source_admin) == before
 
     with subtest("R-PAIR-6, R-PAIR-8: setup on the source creates users, the library, and its sync account"):
@@ -628,6 +627,13 @@ in
         assert replica_entry()["LibraryMappings"][0]["ExcludeFromLinkCache"]
         # Setup never resets an existing user's password.
         sign_in(source, "carol", "carol-2")
+        movies_library = library(source, source_admin, "Movies")
+        options = dict(movies_library["LibraryOptions"], SaveLocalMetadata=True)
+        set_options = lambda: api(source, "POST", "/Library/VirtualFolders/LibraryOptions", {"Id": movies_library["ItemId"], "LibraryOptions": options}, token=source_admin, expect=204)
+        set_options()
+        assert codes(setup(source, source_admin, 3)) == ["library-writes-beside-media"]
+        options["SaveLocalMetadata"] = False
+        set_options()
         set_mapping(replica, replica_admin, StorageMode="Copy")
         before = configuration(replica, replica_admin)
         assert codes(setup(replica, replica_admin, 3)) == ["conflict-mapping"]

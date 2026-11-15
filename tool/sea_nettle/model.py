@@ -159,6 +159,16 @@ class Entry:
             user_mappings=tuple(UserMapping.from_json(m) for m in as_list(obj.get("UserMappings"))),
         )
 
+    def peer_request(self) -> dict[str, object]:
+        """A request that makes Server Sync call the peer with the key it stores for this
+        entry, and only at its saved URL, so the command never handles the key (R-PAIR-2)."""
+        return {
+            "ServerUrl": self.url,
+            "ApiKey": KEPT_API_KEY,
+            "ServerKey": self.key,
+            "AllowPrivateNetwork": self.allow_private_network,
+        }
+
     @staticmethod
     def list_from_config(config: object) -> tuple[Entry, ...]:
         return tuple(Entry.from_json(s) for s in as_list(as_object(config).get("Servers")))

@@ -126,6 +126,10 @@ class EntryWant:
     server_id: str
     mode: str
     allow_linking: bool
+    # The peer's sync account that the entry's key belongs to, and whether it is an
+    # administrator there.
+    account: str
+    administrator: bool
     # The user here that link streams run as, when the peer's key is a standard user's.
     fallback_user: tuple[str, str] | None
 
@@ -184,6 +188,20 @@ def _entry_conflicts(existing: JsonObject, want: EntryWant) -> list[Item]:
         )
 
     items: list[Item] = []
+    user = text(existing, "AuthenticatedUser")
+    access = text(existing, "AccessLevel")
+    wanted_access = "Administrator" if want.administrator else "User"
+    if user.lower() != want.account.lower() or access.lower() != wanted_access.lower():
+        # An entry signed in as another account could carry rights the spec does not ask for.
+        items.append(
+            conflict(
+                "conflict-entry-account",
+                f"its key belongs to {user or 'an API key'} ({access or 'unknown access'}), but "
+                f"the spec says {want.account} ({wanted_access}).",
+                f"Under {SERVERS}, sign the entry in as {want.account}, or delete it so setup "
+                "adds it",
+            )
+        )
     if not same_url(text(existing, "Url"), want.url):
         items.append(
             conflict(
@@ -322,12 +340,28 @@ def _mapping_conflicts(mapping: JsonObject, want: LibraryMappingWant) -> list[It
             "again.",
         )
 
+    if normalize_id(text(mapping, "SourceLibraryId")) != normalize_id(want.source_library_id):
+        return [
+            conflict(
+                "is for another source library, perhaps one that was deleted and created again.",
+                "remove it",
+            )
+        ]
     if normalize_id(text(mapping, "LocalLibraryId")) != normalize_id(want.local_library_id):
         return [
             conflict(
                 f"goes to {text(mapping, 'LocalLibraryName') or 'another library'}, not "
                 f"{want.local_library_name}.",
                 f"map it to {want.local_library_name}",
+            )
+        ]
+    if strip_slash(text(mapping, "LocalRootPath")) != want.local_path:
+        # Server Sync writes the links under this folder.
+        return [
+            conflict(
+                f"writes to {text(mapping, 'LocalRootPath') or 'no folder'}, not "
+                f"{want.local_path}.",
+                f"set its local folder to {want.local_path}",
             )
         ]
     if text(mapping, "StorageMode") != "Link":
@@ -414,9 +448,18 @@ def user_mapping(server_id: str, want: UserMappingWant, *, enable: bool) -> Edit
     return edit
 
 
-def switch_on(key: str, label: str) -> Edit:
+def has_enabled_user_mapping(config: JsonObject, server_id: str) -> bool:
+    found = find_entry(config, server_id)
+    return found is not None and any(
+        flag(m, "IsEnabled", default=True) for m in _list(found, "UserMappings")
+    )
+
+
+def switch_on(key: str, label: str, *, when: Callable[[JsonObject], bool] | None = None) -> Edit:
+    """Turns on a Server Sync feature, when `when` holds for the document as edited so far."""
+
     def edit(config: JsonObject) -> list[Item]:
-        if flag(config, key, default=False):
+        if flag(config, key, default=False) or (when is not None and not when(config)):
             return []
         config[key] = True
         return [Change(text=f"Turned on {label}")]

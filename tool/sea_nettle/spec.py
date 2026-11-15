@@ -29,6 +29,9 @@ LIBRARY_TYPES = (
 )
 # Jellyfin's user name rule (`UserManager.ValidUsernameRegex`).
 USER_NAME = re.compile(r"^(?!\s)[\w\ \-'._@+]+(?<!\s)$")
+# Characters Jellyfin replaces in a library's folder name (`GetValidFilename`), so a library
+# named with them would not be found by its name again.
+LIBRARY_NAME_FORBIDDEN = re.compile(r'[\x00-\x1f"<>|:*?\\/]')
 # Library keys name the replica's library directory.
 LIBRARY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # The same rule as Peer Login's source URL (R-LOGIN-7): HTTPS, or HTTP to loopback.
@@ -86,8 +89,6 @@ class Person:
     name: str
     # Creates the user when it is missing; None requires it to exist.
     password_file: Path | None
-    # Maps the user to their Peer Login account on the replica, so their history syncs.
-    sync_history: bool
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -95,7 +96,11 @@ class Spec:
     source: Server
     replica: Server
     libraries: tuple[Library, ...]
+    # Mapped to their Peer Login accounts on the replica when the source account is an
+    # administrator: such a key streams links as the user the replica maps.
     users: tuple[Person, ...]
+    # Whether the mapped users' watch history syncs to the replica.
+    sync_history: bool
 
     def server(self, role: Role) -> Server:
         return self.source if role == "source" else self.replica
@@ -154,7 +159,7 @@ def _path(value: str, where: str, key: str, errors: _Errors) -> str:
 
 
 def _parse(obj: dict[str, object], errors: _Errors) -> Spec | None:
-    _fields(obj, "spec", errors, {"source", "replica", "libraries", "users"})
+    _fields(obj, "spec", errors, {"source", "replica", "libraries", "users", "syncHistory"})
     source = _server(obj.get("source"), "source", errors)
     replica = _server(obj.get("replica"), "replica", errors)
     libraries = tuple(
@@ -167,9 +172,16 @@ def _parse(obj: dict[str, object], errors: _Errors) -> Spec | None:
         for i, item in enumerate(as_list(obj.get("users")))
         if (user := _user(item, f"users[{i}]", errors)) is not None
     )
+    sync_history = _bool(obj, "syncHistory", "spec", errors)
     if source is None or replica is None:
         return None
-    return Spec(source=source, replica=replica, libraries=libraries, users=users)
+    return Spec(
+        source=source,
+        replica=replica,
+        libraries=libraries,
+        users=users,
+        sync_history=sync_history,
+    )
 
 
 def _object(value: object, where: str, errors: _Errors) -> dict[str, object] | None:
@@ -221,6 +233,8 @@ def _library(value: object, where: str, errors: _Errors) -> Library | None:
     name = _text(obj, "name", where, errors)
     if name != name.strip():
         errors.add(where, '"name" must not start or end with spaces')
+    if LIBRARY_NAME_FORBIDDEN.search(name):
+        errors.add(where, '"name" must not contain control characters or any of " < > | : * ? \\ /')
     library_type = _text(obj, "type", where, errors)
     if library_type and library_type not in LIBRARY_TYPES:
         errors.add(where, f'"type" must be one of {", ".join(LIBRARY_TYPES)}')
@@ -247,6 +261,7 @@ def _content(value: object, where: str, errors: _Errors) -> AllContent | Whiteli
                 if (
                     item.startswith("/")
                     or posixpath.normpath(item) != item
+                    or item == "."
                     or ".." in item.split("/")
                 ):
                     errors.add(
@@ -261,7 +276,7 @@ def _user(value: object, where: str, errors: _Errors) -> Person | None:
     obj = _object(value, where, errors)
     if obj is None:
         return None
-    _fields(obj, where, errors, {"name", "passwordFile", "syncHistory"})
+    _fields(obj, where, errors, {"name", "passwordFile"})
     name = _text(obj, "name", where, errors)
     _user_name(name, where, errors)
     password_file = obj.get("passwordFile")
@@ -273,7 +288,6 @@ def _user(value: object, where: str, errors: _Errors) -> Person | None:
     return Person(
         name=name,
         password_file=Path(password_file) if password_file else None,
-        sync_history=_bool(obj, "syncHistory", where, errors),
     )
 
 
@@ -320,11 +334,10 @@ def _check(spec: Spec, errors: _Errors, *, role: Role, admin_name: str) -> None:
         )
     # R-PAIR-5: Server Sync syncs only the key user's own history with a standard user's key
     # (`SourceServer.MaySyncUser`), so a limited source account cannot carry other users'.
-    history = [u.name for u in spec.users if u.sync_history]
-    if history and not spec.source.sync_account.administrator:
+    if spec.sync_history and not spec.source.sync_account.administrator:
         errors.add(
-            "users",
-            f"syncHistory for {', '.join(history)} needs source.syncAccount.administrator = "
-            "true: with a limited account, Server Sync syncs only that account's own history. "
-            "Make the source sync account an administrator, or set syncHistory to false",
+            "spec",
+            "syncHistory needs source.syncAccount.administrator = true: with a limited "
+            "account, Server Sync syncs only that account's own history. Make the source "
+            "sync account an administrator, or set syncHistory to false",
         )

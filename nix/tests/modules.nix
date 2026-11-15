@@ -88,10 +88,8 @@ let
       sourcePath = "/srv/media/movies";
       content = "all";
     };
-    users.alice = {
-      passwordFile = "/run/secrets/alice";
-      syncHistory = true;
-    };
+    users.alice.passwordFile = "/run/secrets/alice";
+    syncHistory = true;
   };
 
   setupReplica = eval [
@@ -272,9 +270,9 @@ let
           {
             name = "alice";
             passwordFile = "/run/secrets/alice";
-            syncHistory = true;
           }
         ]
+      && spec.syncHistory
       && spec.source.syncAccount.passwordFile == "/run/secrets/replica-sync"
       && !lib.hasInfix "--spec" (wrapperScript replica)
       && !(builtins.tryEval (
@@ -290,13 +288,24 @@ let
 
     "setup on the source passes its role and no replica folder" =
       let
-        script = wrapperScript (eval [
-          ../modules/jellyfin.nix
-          ../modules/server-sync.nix
-          { sea-nettle.jellyfin.setup = setupSpec; }
-        ]);
+        setupSource =
+          media:
+          eval [
+            ../modules/jellyfin.nix
+            ../modules/server-sync.nix
+            {
+              sea-nettle.jellyfin = {
+                setup = setupSpec;
+                mediaDirectory = media;
+              };
+            }
+          ];
+        script = wrapperScript (setupSource "/srv/media");
       in
-      lib.hasInfix "--role source" script && !lib.hasInfix "--replica-root" script;
+      lib.hasInfix "--role source" script
+      && !lib.hasInfix "--replica-root" script
+      && assertionsPass (setupSource "/srv/media")
+      && assertionFails (setupSource "/srv/med") "must lie in sea-nettle.jellyfin.mediaDirectory";
 
     "the replica gets a folder per setup library and the spec's source URL for Peer Login" =
       (tmpfiles setupReplica) ? "${dataDir setupReplica}/replica/movies"

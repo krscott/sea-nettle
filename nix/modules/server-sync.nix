@@ -18,12 +18,12 @@ let
   inherit (lib) mkOption types;
 
   syncAccount =
-    server:
+    server: peer:
     types.submodule {
       options = {
         name = mkOption {
           type = types.nonEmptyStr;
-          example = "${server}-sync";
+          example = "${peer}-sync";
           description = "Dedicated account on the ${server} that the other server's Server Sync entry signs in as. Setup on the ${server} creates it.";
         };
         passwordFile = mkOption {
@@ -33,13 +33,13 @@ let
         };
         administrator = mkOption {
           type = types.bool;
-          description = "Whether the account is a Jellyfin administrator. A limited account carries content and links only; history sync for other users needs an administrator on the source.";
+          description = "Whether the account is a Jellyfin administrator. A limited source account carries content and links only, and the source streams every replica user's links as it; syncHistory needs an administrator.";
         };
       };
     };
 
   server =
-    role:
+    role: peer:
     types.submodule {
       options = {
         url = mkOption {
@@ -47,7 +47,7 @@ let
           example = "https://${role}.example.ts.net:8445";
           description = "The ${role}'s HTTPS URL, as the other server reaches it.";
         };
-        syncAccount = mkOption { type = syncAccount role; };
+        syncAccount = mkOption { type = syncAccount role peer; };
       };
     };
 
@@ -98,17 +98,10 @@ let
   );
 
   user = types.submodule {
-    options = {
-      passwordFile = mkOption {
-        type = types.nullOr types.externalPath;
-        default = null;
-        description = "Runtime file with the password for creating the user on the source, or null to require an existing user. An existing user's password is never changed.";
-      };
-      syncHistory = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Map the user to their replica account after their first replica sign-in, so their watch history syncs.";
-      };
+    options.passwordFile = mkOption {
+      type = types.nullOr types.externalPath;
+      default = null;
+      description = "Runtime file with the password for creating the user on the source, or null to require an existing user. An existing user's password is never changed.";
     };
   };
 
@@ -116,7 +109,7 @@ let
   # The spec holds paths to password files, never passwords (R-PAIR-2).
   specFile = pkgs.writeText "sea-nettle-setup.json" (
     builtins.toJSON {
-      inherit (setup) source replica;
+      inherit (setup) source replica syncHistory;
       libraries = lib.mapAttrsToList (key: l: l // { inherit key; }) setup.libraries;
       users = lib.mapAttrsToList (name: u: u // { inherit name; }) setup.users;
     }
@@ -162,8 +155,8 @@ in
       type = types.nullOr (
         types.submodule {
           options = {
-            source = mkOption { type = server "source"; };
-            replica = mkOption { type = server "replica"; };
+            source = mkOption { type = server "source" "replica"; };
+            replica = mkOption { type = server "replica" "source"; };
             libraries = mkOption {
               type = types.attrsOf library;
               default = { };
@@ -172,7 +165,12 @@ in
             users = mkOption {
               type = types.attrsOf user;
               default = { };
-              description = "Ordinary source users, by name.";
+              description = "Ordinary source users, by name. With an administrator source account, each is mapped to their replica account after their first replica sign-in; the source streams their links only through that mapping.";
+            };
+            syncHistory = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Sync the mapped users' watch history to the replica. Needs an administrator source account.";
             };
           };
         }
@@ -195,6 +193,16 @@ in
             lib.attrNames setup.libraries
           );
         message = "sea-nettle.jellyfin.setup.libraries keys may hold only letters, digits, \".\", \"_\" and \"-\".";
+      }
+      {
+        # Jellyfin sees only the media directory.
+        assertion =
+          setup == null
+          || cfg.role != "source"
+          || lib.all (
+            l: cfg.mediaDirectory != null && lib.hasPrefix "${cfg.mediaDirectory}/" "${l.sourcePath}/"
+          ) (lib.attrValues setup.libraries);
+        message = "Each sea-nettle.jellyfin.setup.libraries.<key>.sourcePath must lie in sea-nettle.jellyfin.mediaDirectory.";
       }
     ];
 

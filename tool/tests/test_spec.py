@@ -40,9 +40,10 @@ SPEC: dict[str, object] = {
         },
     ],
     "users": [
-        {"name": "alice", "passwordFile": "/run/secrets/alice", "syncHistory": True},
-        {"name": "bob", "passwordFile": None, "syncHistory": False},
+        {"name": "alice", "passwordFile": "/run/secrets/alice"},
+        {"name": "bob", "passwordFile": None},
     ],
+    "syncHistory": True,
 }
 
 
@@ -74,16 +75,26 @@ def test_history_for_other_users_needs_an_administrator_source_account() -> None
     assert isinstance(source, dict)
     source["syncAccount"]["administrator"] = False
     [problem] = errors(value)
-    assert "syncHistory for alice needs source.syncAccount.administrator = true" in problem
+    assert "syncHistory needs source.syncAccount.administrator = true" in problem
+    value["syncHistory"] = False
+    assert isinstance(parse(value, role="source", admin_name="admin"), Spec)
 
 
 def test_reports_every_problem_at_once() -> None:
     value = spec(
         libraries=[
             {"key": "a b", "name": "Movies", "type": "film", "sourcePath": "srv/", "content": 1},
+            {
+                "key": "c",
+                "name": "4K: Films",
+                "type": "movies",
+                "sourcePath": "/c",
+                "content": {"whitelist": ["."]},
+            },
             {"key": "x", "name": "movies", "type": "movies", "sourcePath": "/m", "content": "all"},
         ],
-        users=[{"name": " alice", "syncHistory": "yes"}],
+        users=[{"name": " alice", "syncHistory": True}],
+        syncHistory="yes",
         extra=True,
     )
     found = "\n".join(errors(value))
@@ -95,7 +106,10 @@ def test_reports_every_problem_at_once() -> None:
         'libraries[0]: "content" must be "all"',
         'libraries: name "movies" is used twice',
         'users[0]: " alice" is not a valid Jellyfin user name',
-        'users[0]: "syncHistory" must be true or false',
+        'users[0]: unknown field "syncHistory"',
+        'spec: "syncHistory" must be true or false',
+        'libraries[1]: "name" must not contain',
+        'libraries[1]: whitelist item "." must be a path relative to sourcePath',
     ]:
         assert expected in found, found
 
@@ -123,9 +137,7 @@ def test_sync_accounts_are_dedicated() -> None:
     replica = value["replica"]
     assert isinstance(replica, dict)
     replica["syncAccount"]["name"] = "Admin"
-    as_list(value["users"]).append(
-        {"name": "replica-sync", "passwordFile": None, "syncHistory": False}
-    )
+    as_list(value["users"]).append({"name": "replica-sync", "passwordFile": None})
     assert errors(value, role="replica") == [
         'source.syncAccount: "replica-sync" is also listed under users',
         'replica.syncAccount: "Admin" is this server\'s administrator; use a dedicated account',
