@@ -175,8 +175,9 @@ replica again. The runs:
   `sourcePath`.
 - With an administrator source account, each spec user is mapped once they
   have signed in to the replica with their source password (see Peer Login
-  below), on the next run. With `syncHistory`, history sync is turned on with
-  the first mapping.
+  below), on the next run. Until then the report lists them under "Waiting",
+  which does not make the run exit 3. With `syncHistory`, history sync is
+  turned on with the first mapping.
 
 New libraries keep metadata, artwork, subtitles, lyrics, and trickplay in
 Jellyfin's state, not beside the media.
@@ -232,8 +233,8 @@ Do not copy databases between servers. To recover a broken peer, run
 ## Checking a pair
 
 `sudo sea-nettle status` checks this server's Server Sync setup and never
-changes configuration; `sea-nettle setup` ends with the same report. Run it on each server; each run covers one direction.
-It signs in as the initial administrator with the password in
+changes configuration. Run it on each server; each run covers one direction.
+`sea-nettle setup` ends with the same report. `status` signs in as the initial administrator with the password in
 `initialAdmin.passwordFile`, and signs out before it exits. If the password
 was changed in the dashboard, update the file to match: each refused run counts
 as a failed sign-in, and Jellyfin disables the account once it reaches the

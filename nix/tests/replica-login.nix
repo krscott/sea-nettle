@@ -501,16 +501,20 @@ in
         " && cp ${media}/other.mp4 '/srv/media/movies/Other (2021)/Other (2021).mp4'"
     )
 
-    with subtest("R-PAIR-5: setup refuses an unsupported spec before changing anything"):
-        wrapper = source.succeed("cat $(readlink -f $(command -v sea-nettle))")
+    def setup_command(machine, edit):
+        """The wrapper's `sea-nettle setup --json` command, with `edit` applied to its spec."""
+        wrapper = machine.succeed("cat $(readlink -f $(command -v sea-nettle))")
         found = re.search(r"--spec (\S+)", wrapper)
         assert found, wrapper
         spec_path = found.group(1)
-        spec = json.loads(source.succeed(f"cat {spec_path}"))
-        spec["source"]["syncAccount"]["administrator"] = False
-        source.succeed(f"echo {shlex.quote(json.dumps(spec))} >/tmp/limited-spec.json")
+        spec = json.loads(machine.succeed(f"cat {spec_path}"))
+        edit(spec)
+        machine.succeed(f"echo {shlex.quote(json.dumps(spec))} >/tmp/edited-spec.json")
         command = next(l for l in wrapper.splitlines() if l.startswith("exec "))
-        command = command.removeprefix("exec ").replace(spec_path, "/tmp/limited-spec.json").replace('"$@"', "setup")
+        return command.removeprefix("exec ").replace(spec_path, "/tmp/edited-spec.json").replace('"$@"', "setup --json")
+
+    with subtest("R-PAIR-5: setup refuses an unsupported spec before changing anything"):
+        command = setup_command(source, lambda spec: spec["source"]["syncAccount"].update(administrator=False))
         before = configuration(source, source_admin)
         out = setup(source, source_admin, 1, command=command)
         assert "nothing was changed" in out and "syncHistory needs source.syncAccount.administrator = true" in out, out
@@ -558,6 +562,18 @@ in
         assert not any(m["IsEnabled"] for m in entry["UserMappings"]), entry
         assert {"peer-not-listed", "unmapped-user"} <= set(attention(replica, replica_admin, 3))
 
+    with subtest("R-PAIR-3, R-PAIR-6: setup ends the peer session it does not keep"):
+        # The replica's account is limited, so a spec that asks for an administrator conflicts
+        # only after Server Sync has signed in to it.
+        command = setup_command(source, lambda spec: spec["replica"]["syncAccount"].update(administrator=True))
+        before = configuration(source, source_admin)
+        assert "conflict-sync-account" in codes(setup(source, source_admin, 3, command=command))
+        assert configuration(source, source_admin) == before
+        devices = api(replica, "GET", "/Devices", token=replica_admin)["Items"]
+        assert not [d for d in devices if d.get("LastUserName") == "source-sync"], devices
+        sessions = api(replica, "GET", "/Sessions", token=replica_admin)
+        assert not [s for s in sessions if s.get("UserName") == "source-sync"], sessions
+
     with subtest("R-PAIR-6: setup on the source adds the replica and pairs"):
         report = setup(source, source_admin, 0)
         assert report["changes"] == ["Added the replica at https://replica as a Push peer, signed in as source-sync"], report
@@ -565,9 +581,9 @@ in
         assert entry["Mode"] == "Push" and entry["AllowLinking"], entry
 
     with subtest("R-PAIR-7: setup enables the mappings once the link check passes, and defers new users"):
-        report = setup(replica, replica_admin, 3)
-        # Carol has not signed in to the replica yet.
-        assert codes(report) == ["setup-user-deferred"], report
+        report = setup(replica, replica_admin, 0)
+        # Carol has not signed in to the replica yet; that needs no attention.
+        assert codes(report) == [] and [w["code"] for w in report["waiting"]] == ["setup-user-deferred"], report
         config = server_sync_config(replica, replica_admin)
         assert config["EnableContentSync"] and config["EnableHistorySync"]
         entry = config["Servers"][0]

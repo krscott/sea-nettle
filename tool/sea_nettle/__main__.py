@@ -14,7 +14,7 @@ from pathlib import Path
 from types import FrameType
 
 from .jellyfin import Fatal, signed_in
-from .report import build
+from .report import Attention, build
 from .setup import setup
 from .spec import Spec, parse
 from .status import collect
@@ -100,12 +100,14 @@ def main(argv: list[str] | None = None) -> int:
     # SIGTERM ends the run the way Ctrl-C does, through the sign-out (R-PAIR-3).
     signal.signal(signal.SIGTERM, _exit_on_sigterm)
     changes: tuple[str, ...] = ()
+    waiting: tuple[Attention, ...] = ()
     try:
         with signed_in(args.url, name=args.admin_name, password_file=args.password_file) as api:
             if spec is not None:
                 outcome = setup(api, spec, role=args.role, replica_root=args.replica_root)
                 changes = outcome.changes
                 attention = outcome.attention
+                waiting = outcome.waiting
             else:
                 attention = ()
             snapshot = collect(api)
@@ -113,7 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sea-nettle: {e}", file=sys.stderr)
         return 1
     report = build(
-        snapshot, expected_version=args.server_sync_version, changes=changes, attention=attention
+        snapshot,
+        expected_version=args.server_sync_version,
+        changes=changes,
+        attention=attention,
+        waiting=waiting,
     )
     sys.stdout.write(report.to_json() + "\n" if args.json else report.to_text())
     if not api.signed_out:

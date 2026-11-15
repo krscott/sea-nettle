@@ -321,14 +321,14 @@ nothing needs attention, 3 when something does, 1 when the command fails, and
 
 `setup` reads a spec of both servers: each server's URL and sync account, the
 libraries, the ordinary source users, and whether watch history syncs. A sync
-account is a dedicated user on
-one server that the other server's entry signs in as; the spec says whether it
-is an administrator. The spec is parsed and checked as a whole first; a problem
-exits 1 before the command signs in (R-PAIR-5). The checks cover field types,
-names Jellyfin accepts (a library name must survive Jellyfin's folder-name
-rules, or Jellyfin would store it under another name), HTTPS URLs as Peer Login requires (R-LOGIN-7),
-duplicate names and paths, sync accounts that double as a spec user or as this
-server's administrator, and history sync through a limited source account.
+account is a dedicated user on one server that the other server's entry signs
+in as; the spec says whether it is an administrator. The spec is parsed and
+checked as a whole first; a problem exits 1 before the command signs in
+(R-PAIR-5). The checks cover field types, names Jellyfin accepts (a library
+name must survive Jellyfin's folder-name rules, or Jellyfin would store it
+under another name), HTTPS URLs as Peer Login requires (R-LOGIN-7), duplicate
+names and paths, sync accounts that double as a spec user or as this server's
+administrator, and history sync through a limited source account.
 
 Each run signs in to its own server, as `status` does, and does only that
 server's part. The part that needs the peer waits until `setup` has run there:
@@ -343,44 +343,45 @@ replica again sets up everything except users who have not signed in to the
 replica yet. Each run reports what it waits for.
 
 **Adding, never rewriting (R-PAIR-6).** Every step creates what is missing and
-checks what exists. An existing item that contradicts the spec is reported as
-a conflict with a fix, and the run builds nothing on it. Users are matched by
-name ignoring case, libraries by name, entries by server ID as Server Sync's
-`FindServerById` does, library mappings by source path, user mappings by local
-or source user, and grants by user ID. A sync account must have the
-administrator flag the spec asks for, on both servers, and a limited one must
-not see every library; setup never changes either. An existing entry must be
-signed in as the spec's sync account with the spec's access level. An existing
-user's password is never read or changed. When the sync account is unusable,
-the run stops before the peer's part, so it adds no entry without a grant.
+checks what exists. An existing item that contradicts the spec is reported as a
+conflict with a fix, and the run builds nothing on it. Users are matched by
+name ignoring case, libraries by name (an existing one must hold the spec's
+folder and type), entries by server ID as Server Sync's `FindServerById` does,
+library mappings by source path, user mappings by local or source user, and
+grants by user ID. A sync account must have the administrator flag the spec
+asks for, on both servers, and a limited one must not see every library; setup
+never changes either. An existing entry must be signed in as the spec's sync
+account with the spec's access level. An existing user's password is never read
+or changed. When the sync account is unusable, the run stops before the peer's
+part, so it adds no entry without a grant.
 
 The exceptions are what the spec asks to have on: each spec mapping is enabled
 once the replica's link check passes (R-PAIR-7), with `EnableContentSync`, and
-`EnableHistorySync` once a user mapping is enabled if the spec syncs history. A rerun turns them
-on again if they were turned off in the dashboard; to stop syncing a library or
-user, remove it from the spec first.
+`EnableHistorySync` once a user mapping is enabled if the spec syncs history. A
+rerun turns them on again if they were turned off in the dashboard; to stop
+syncing a library or user, remove it from the spec first.
 
-**Configuration writes.** Server Sync keeps entries, mappings, and grants in one
-document that the dashboard and Server Sync's own tasks also save, whole, with
-no version check. Each write therefore reads the document, replaces every
-stored key with the kept-key placeholder, applies the run's edits to that
-fresh copy, and posts it if an edit changed something. Edits are pure
-functions over the document's JSON, so whatever changed since the run's
-earlier reads is kept. A dashboard save between that read and the post can
-still be lost; the operator docs say not to edit during a run.
+**Configuration writes.** Server Sync keeps entries, mappings, and grants in
+one document that the dashboard and Server Sync's own tasks also save, whole,
+with no version check. Each write therefore reads the document, replaces every
+stored key with the kept-key placeholder, applies the run's edits to that fresh
+copy, and posts it if an edit changed something. Edits are pure functions over
+the document's JSON, so whatever changed since the run's earlier reads is kept.
+A dashboard save between that read and the post can still be lost; the operator
+docs say not to edit during a run.
 
 **Sync accounts and entries.** A new sync account gets its password from the
-spec's file. A limited one sees only the spec's libraries
-(`EnableAllFolders` off). An existing account's library access is reported,
-not changed. A new entry needs the peer's server ID, from its anonymous
-`/System/Info/Public`, and a token: Server Sync's `POST /Sync/Authenticate`
-signs in to the peer's sync account and returns it (R-PAIR-3). That sign-in
-revokes the token Server Sync got earlier for the same account, so setup
-signs in only when no entry has the peer's server ID, and reports a conflict
-instead when an entry has the peer's URL but another or no server ID. When the
-token is not saved as a new entry's key, because the peer's answer contradicts
-the spec, the save fails, or the run is interrupted, setup ends its session at
-the peer (R-PAIR-3); if that fails, the report says which device to remove.
+spec's file. A limited one sees only the spec's libraries (`EnableAllFolders`
+off). An existing account's library access is reported, not changed. A new
+entry needs the peer's server ID, from its anonymous `/System/Info/Public`, and
+a token: Server Sync's `POST /Sync/Authenticate` signs in to the peer's sync
+account and returns it (R-PAIR-3). That sign-in revokes the token Server Sync
+got earlier for the same account, so setup signs in only when no entry has the
+peer's server ID, and reports a conflict instead when an entry has the peer's
+URL but another or no server ID. When the token is not saved as a new entry's
+key, because the peer's answer contradicts the spec, the save fails, or the run
+is interrupted, setup ends its session at the peer (R-PAIR-3); if that fails,
+it prints at once which device to remove.
 
 | Entry | Mode | Settings |
 | --- | --- | --- |
@@ -391,27 +392,29 @@ A standard user's key streams links only as itself, so the source streams for
 every replica user as its limited sync account. With an administrator account,
 the source trusts the user the replica names, from the replica's user mapping.
 
-**Libraries (R-PAIR-8).** A new library is created with
-`SaveLocalMetadata`, `SaveSubtitlesWithMedia`, `SaveLyricsWithMedia`, and
-`SaveTrickplayWithMedia` off, and `MetadataSavers` empty, so nothing is written
-beside the media; Jellyfin starts its scan. An existing source library that
-writes beside the media is reported.
+**Libraries (R-PAIR-8).** A new library is created with `SaveLocalMetadata`,
+`SaveSubtitlesWithMedia`, `SaveLyricsWithMedia`, and `SaveTrickplayWithMedia`
+off, and `MetadataSavers` empty, so nothing is written beside the media;
+Jellyfin starts its scan. An existing source library that writes beside the
+media is reported.
 
 **Mappings (R-PAIR-7).** The replica asks its own Server Sync for the source's
 libraries and users, with the entry's key, as the dashboard does. Each spec
 library becomes a Link mapping from its source path to its replica folder,
 matched by library name. With `content = "all"` its filter is AllowAll; a
-whitelist is resolved against the source's top-level items, matching an item
-at a listed path or inside a listed folder, because a movie's path is its
-video file. Server Sync finds whitelisted content by item ID and matches hints
-by path, so each filtered item carries both. A rerun adds new whitelist items
-and keeps items added in the dashboard. With an administrator source account,
-each spec user is mapped to the replica's Peer Login user with the same name
-once that user has signed in, because the source streams links only for mapped
-users; a local replica account with that name is a conflict (R-LOGIN-9). With a
-limited account, no user is mapped: the fallback user streams for everyone. New mappings are
-disabled unless this run's link check passed, and a whitelist with an item the
-source lacks keeps its mapping disabled.
+whitelist is resolved against the source's top-level items, matching an item at
+a listed path or inside a listed folder, because a movie's path is its video
+file. Server Sync finds whitelisted content by item ID and matches hints by
+path, so each filtered item carries both. A rerun adds new whitelist items and
+keeps items added in the dashboard. With an administrator source account, each
+spec user is mapped to the replica's Peer Login user with the same name once
+that user has signed in, because the source streams links only for mapped
+users; a local replica account with that name is a conflict (R-LOGIN-9). A
+user who has not signed in yet is listed under "Waiting", which does not count
+toward exit status 3: only that user's sign-in can resolve it. With a limited
+account, no user is mapped: the fallback user streams for everyone. New
+mappings are disabled unless this run's link check passed, and a whitelist with
+an item the source lacks keeps its mapping disabled.
 
 Server Sync's caller whitelist matches the address a call comes from.
 Jellyfin honours forwarded headers only for configured known proxies, and

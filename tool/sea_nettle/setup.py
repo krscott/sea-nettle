@@ -8,6 +8,7 @@ later run, after `setup` has run there.
 
 from __future__ import annotations
 
+import sys
 import time
 import urllib.parse
 from collections.abc import Generator
@@ -56,6 +57,7 @@ PEER_TIMEOUT = 120
 class Outcome:
     changes: tuple[str, ...]
     attention: tuple[Attention, ...]
+    waiting: tuple[Attention, ...]
 
 
 class Run:
@@ -67,6 +69,7 @@ class Run:
         self.role: Role = role
         self.replica_root = replica_root
         self.items: list[Item] = []
+        self.waiting: list[Attention] = []
         # The spec's libraries on this server, by key, once `ensure_libraries` has run.
         self.library_ids: dict[str, str] = {}
 
@@ -78,6 +81,7 @@ class Run:
         return Outcome(
             changes=tuple(i.text for i in self.items if isinstance(i, Change)),
             attention=tuple(i for i in self.items if isinstance(i, Attention)),
+            waiting=tuple(self.waiting),
         )
 
     def note(self, code: str, subject: str, problem: str, fix: str) -> None:
@@ -239,6 +243,15 @@ class Run:
                     f"{RERUN}.",
                 )
                 return None
+            kind = text(existing, "CollectionType")
+            if kind and kind.lower() != library.type:
+                self.note(
+                    "conflict-library-type",
+                    subject,
+                    f"the existing library holds {kind}, but the spec says {library.type}.",
+                    f"Correct the spec's type, or rename the spec's library; {RERUN}.",
+                )
+                return None
             options = as_object(existing.get("LibraryOptions") or {})
             if self.role == "source" and writes_beside_media(options):
                 self.note(
@@ -333,8 +346,14 @@ class Run:
             if signed_in is None:
                 return None
             with self.unsaved_token_ends(signed_in) as keep:
-                if self.edit_config([edits.entry(want, signed_in)]):
-                    keep()
+                try:
+                    if self.edit_config([edits.entry(want, signed_in)]):
+                        keep()
+                except Fatal:
+                    # A save that Jellyfin took but did not answer in time holds the token.
+                    if self.entry_saved(want.server_id, signed_in):
+                        keep()
+                    raise
         else:
             self.edit_config([edits.entry(want, None)])
         found = edits.find_entry(self.config(), want.server_id)
@@ -343,6 +362,13 @@ class Run:
         ):
             return None
         return Entry.from_json(found)
+
+    def entry_saved(self, server_id: str, signed_in: SignedIn) -> bool:
+        try:
+            found = edits.find_entry(self.config(), server_id)
+        except Fatal:
+            return False
+        return found is not None and text(found, "AuthenticatedUser") == signed_in.user
 
     def sign_in_to_peer(self, server_id: str) -> SignedIn | None:
         """Signs Server Sync in to the peer's sync account, for a new entry's key.
@@ -423,12 +449,12 @@ class Run:
         try:
             Jellyfin(peer, token=signed_in.token).request("POST", "/Sessions/Logout")
         except Fatal as e:
-            self.note(
-                "setup-peer-session-left",
-                f"Peer {peer}",
-                f"setup could not end the session it opened there as {signed_in.user}: {e}",
-                f"On the {self.other}, remove the Server Sync device of {signed_in.user} under "
-                "Dashboard > Devices.",
+            # Printed at once: a failed or interrupted run prints no report (R-PAIR-3).
+            print(
+                f"sea-nettle: could not end the session that setup opened on the {self.other} as "
+                f"{signed_in.user}: {e} On the {self.other}, remove the Server Sync device of "
+                f"{signed_in.user} under Dashboard > Devices.",
+                file=sys.stderr,
             )
 
 
@@ -499,7 +525,13 @@ def run_setup(run: Run) -> None:
     if not edit_list:
         return
     if linked:
-        edit_list.append(edits.switch_on("EnableContentSync", "content sync"))
+        edit_list.append(
+            edits.switch_on(
+                "EnableContentSync",
+                "content sync",
+                when=lambda c: edits.has_enabled_library_mapping(c, server_id),
+            )
+        )
         if run.spec.sync_history:
             edit_list.append(
                 edits.switch_on(
@@ -600,12 +632,15 @@ def user_mapping_edits(run: Run, entry: Entry, *, server_id: str, enable: bool) 
             continue
         if local is None:
             # Peer Login creates the replica user at their first sign-in.
-            run.note(
-                "setup-user-deferred",
-                f"User {person.name}",
-                "they have not signed in to the replica yet, so they cannot be mapped.",
-                f"After {person.name} signs in to the replica with their source password, "
-                f"{RERUN}.",
+            run.waiting.append(
+                Attention(
+                    code="setup-user-deferred",
+                    subject=f"User {person.name}",
+                    problem="they have not signed in to the replica yet, so they cannot be "
+                    "mapped.",
+                    fix=f"After {person.name} signs in to the replica with their source "
+                    f"password, {RERUN}.",
+                )
             )
             continue
         provider = text(as_object(local.get("Policy") or {}), "AuthenticationProviderId")

@@ -449,10 +449,16 @@ def user_mapping(server_id: str, want: UserMappingWant, *, enable: bool) -> Edit
 
 
 def has_enabled_user_mapping(config: JsonObject, server_id: str) -> bool:
+    return _has_enabled(config, server_id, "UserMappings")
+
+
+def has_enabled_library_mapping(config: JsonObject, server_id: str) -> bool:
+    return _has_enabled(config, server_id, "LibraryMappings")
+
+
+def _has_enabled(config: JsonObject, server_id: str, key: str) -> bool:
     found = find_entry(config, server_id)
-    return found is not None and any(
-        flag(m, "IsEnabled", default=True) for m in _list(found, "UserMappings")
-    )
+    return found is not None and any(flag(m, "IsEnabled", default=True) for m in _list(found, key))
 
 
 def switch_on(key: str, label: str, *, when: Callable[[JsonObject], bool] | None = None) -> Edit:

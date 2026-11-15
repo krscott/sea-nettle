@@ -53,6 +53,9 @@ class Report:
     changes: tuple[str, ...]
     peers: tuple[Peer, ...]
     attention: tuple[Attention, ...]
+    # What `setup` waits for that only time can bring, such as a user's first sign-in; it
+    # does not count as needing attention.
+    waiting: tuple[Attention, ...]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -64,6 +67,11 @@ class Report:
             lines += [f"- {c}" for c in self.changes]
         lines.append(f"Server Sync on {self.server}")
         lines += [f"  Peer {p.name} at {p.url}: {p.link}" for p in self.peers]
+        if self.waiting:
+            lines.append("Waiting:")
+            for item in self.waiting:
+                lines.append(f"- {item.subject}: {item.problem}")
+                lines.append(f"  Then: {item.fix}")
         if not self.attention:
             lines.append("Nothing needs attention.")
             return "\n".join(lines) + "\n"
@@ -85,6 +93,7 @@ def build(
     expected_version: str,
     changes: tuple[str, ...] = (),
     attention: tuple[Attention, ...] = (),
+    waiting: tuple[Attention, ...] = (),
 ) -> Report:
     """The report on `snapshot`, after `setup`'s changes and the items it found."""
     return Report(
@@ -92,6 +101,7 @@ def build(
         changes=changes,
         peers=tuple(_peer(e, snapshot.checks.get(e.key)) for e in snapshot.entries),
         attention=attention + tuple(assess(snapshot, expected_version=expected_version)),
+        waiting=waiting,
     )
 
 
