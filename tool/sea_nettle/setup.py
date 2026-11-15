@@ -349,8 +349,9 @@ class Run:
                 try:
                     if self.edit_config([edits.entry(want, signed_in)]):
                         keep()
-                except Fatal:
-                    # A save that Jellyfin took but did not answer in time holds the token.
+                except BaseException:
+                    # A save that Jellyfin took before a failure or an interruption, such as
+                    # an answer that came too late, holds the token.
                     if self.entry_saved(want.server_id, signed_in):
                         keep()
                     raise

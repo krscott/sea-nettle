@@ -71,7 +71,7 @@ class Report:
             lines.append("Waiting:")
             for item in self.waiting:
                 lines.append(f"- {item.subject}: {item.problem}")
-                lines.append(f"  Then: {item.fix}")
+                lines.append(f"  {item.fix}")
         if not self.attention:
             lines.append("Nothing needs attention.")
             return "\n".join(lines) + "\n"
@@ -377,8 +377,8 @@ def unmapped_users(entries: tuple[Entry, ...], users: tuple[User, ...]) -> list[
             subject=f"User {user.name}",
             problem="this Peer Login user has no user mapping, so they cannot play links "
             "from the source, and their watch history does not sync.",
-            fix=f"Add {user.name} to the users of sea-nettle's setup spec and run "
-            "`sudo sea-nettle setup` on the replica; or, under "
+            fix=f"If {user.name} is not in the users of sea-nettle's setup spec, add them; "
+            "then run `sudo sea-nettle setup` on the replica. Or, under "
             f"{SERVERS}, open the source's entry and map {user.name} to their source user in "
             "step 4 Users.",
         )

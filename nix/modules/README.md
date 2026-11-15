@@ -234,11 +234,11 @@ Do not copy databases between servers. To recover a broken peer, run
 
 `sudo sea-nettle status` checks this server's Server Sync setup and never
 changes configuration. Run it on each server; each run covers one direction.
-`sea-nettle setup` ends with the same report. `status` signs in as the initial administrator with the password in
-`initialAdmin.passwordFile`, and signs out before it exits. If the password
-was changed in the dashboard, update the file to match: each refused run counts
-as a failed sign-in, and Jellyfin disables the account once it reaches the
-account's lockout limit, if one is set.
+`sea-nettle setup` ends with the same report. `status` signs in as the initial
+administrator with the password in `initialAdmin.passwordFile`, and signs out
+before it exits. If the password was changed in the dashboard, update the file
+to match: each refused run counts as a failed sign-in, and Jellyfin disables
+the account once it reaches the account's lockout limit, if one is set.
 
 It lists each peer with Server Sync's link check verdict, then what needs
 attention and how to fix it: unreachable or unpaired peers, peers that do not

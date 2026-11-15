@@ -277,4 +277,4 @@ def test_text_report_lists_problem_and_fix() -> None:
     text = build(snapshot(entry(UserMappings=[])), expected_version=VERSION).to_text()
     assert "Needs attention:" in text
     assert "- User Alice: this Peer Login user has no user mapping" in text
-    assert "  Fix: Add Alice to the users of sea-nettle's setup spec" in text
+    assert "  Fix: If Alice is not in the users of sea-nettle's setup spec, add them" in text
