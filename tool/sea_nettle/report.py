@@ -49,6 +49,8 @@ class Peer:
 @dataclass(kw_only=True, frozen=True)
 class Report:
     server: str
+    # What `setup` changed in this run; `status` changes nothing.
+    changes: tuple[str, ...]
     peers: tuple[Peer, ...]
     attention: tuple[Attention, ...]
 
@@ -56,7 +58,11 @@ class Report:
         return json.dumps(asdict(self), indent=2)
 
     def to_text(self) -> str:
-        lines = [f"Server Sync on {self.server}"]
+        lines: list[str] = []
+        if self.changes:
+            lines.append("Changed:")
+            lines += [f"- {c}" for c in self.changes]
+        lines.append(f"Server Sync on {self.server}")
         lines += [f"  Peer {p.name} at {p.url}: {p.link}" for p in self.peers]
         if not self.attention:
             lines.append("Nothing needs attention.")
@@ -73,11 +79,19 @@ def checked_entries(entries: tuple[Entry, ...]) -> tuple[Entry, ...]:
     return tuple(e for e in entries if e.enabled and e.url and e.has_api_key)
 
 
-def build(snapshot: Snapshot, *, expected_version: str) -> Report:
+def build(
+    snapshot: Snapshot,
+    *,
+    expected_version: str,
+    changes: tuple[str, ...] = (),
+    attention: tuple[Attention, ...] = (),
+) -> Report:
+    """The report on `snapshot`, after `setup`'s changes and the items it found."""
     return Report(
         server=snapshot.server_name,
+        changes=changes,
         peers=tuple(_peer(e, snapshot.checks.get(e.key)) for e in snapshot.entries),
-        attention=tuple(assess(snapshot, expected_version=expected_version)),
+        attention=attention + tuple(assess(snapshot, expected_version=expected_version)),
     )
 
 
@@ -103,8 +117,8 @@ def assess(snapshot: Snapshot, *, expected_version: str) -> list[Attention]:
                 code="no-peers",
                 subject="Server Sync",
                 problem="it has no peer entries.",
-                fix=f"Add the other server under {SERVERS}, as described under "
-                '"Dashboard setup" in sea-nettle\'s nix/modules/README.md.',
+                fix="Run `sudo sea-nettle setup` on both servers, as described under "
+                '"Setting up a pair" in sea-nettle\'s nix/modules/README.md.',
             )
         )
     items += duplicate_server_ids(snapshot.entries)

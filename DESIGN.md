@@ -119,8 +119,8 @@ dashboard page edits it.
 
 These are deliberately out of scope for now:
 
-- Server Sync user mappings are not created for new users; map each user in
-  Server Sync once.
+- Server Sync user mappings are not created at a user's first sign-in;
+  `sea-nettle setup` maps the spec's users on its next run.
 - Source lockout counts forwarded attempts, but cached-hash checks during an
   outage are limited only by the replica's own lockout policy.
 - The source's administrator flag is never mirrored.
@@ -234,20 +234,33 @@ Pins a Server Sync release through `jellyfin-plugins`, and installs a
 `sea-nettle` wrapper that passes the command this server's loopback URL, the
 `initialAdmin` name and password file path, and the pinned Server Sync version.
 
+`setup` (nullable) is the setup spec, the same value on both servers. With it
+set, the wrapper also passes the spec as a JSON file in the Nix store, this
+server's `role` (`source`, or `replica` from the `replica` module), and on the
+replica its library folder `${dataDir}/replica`. The spec holds password file
+paths only; `passwordFile` options are typed `externalPath` (R-PAIR-2).
+Library keys are restricted to `[A-Za-z0-9._-]`, because they name the
+replica's library folders.
+
 ### `replica`
 
 Imports `jellyfin` and `server-sync`, and adds:
 
 - the Peer Login package through `jellyfin-plugins`;
-- `${dataDir}/replica` for Server Sync link libraries;
+- `${dataDir}/replica` for Server Sync link libraries, with a folder
+  `${dataDir}/replica/<key>` for each library in the setup spec;
 - Server Sync link-cache defaults and Peer Login's `sourceUrl`, each seeded
   once as plugin configuration and writable afterwards (R-SERVER-2).
+  `sourceUrl` defaults to the setup spec's source URL.
 
 ## `sea-nettle` command
 
-`sea-nettle status` checks one server's Server Sync setup. Operators run it on
-each host; together, the two runs cover both directions of a pair. It is typed
-Python with no dependencies outside the standard library.
+`sea-nettle status` checks one server's Server Sync setup, and
+`sea-nettle setup` sets up one server's side of a pair. Operators run them on
+each host; together, the two runs cover both directions of a pair. The command
+is typed Python with no dependencies outside the standard library.
+
+### `status`
 
 It signs in to Jellyfin's loopback URL as the initial administrator, with the
 password read from `initialAdmin.passwordFile` (R-PAIR-2), and signs out when
@@ -301,6 +314,94 @@ Disabled entries are listed but not assessed. The exit status is 0 when
 nothing needs attention, 3 when something does, 1 when the command fails, and
 2 for usage errors.
 
+`setup` ends with the same report, after its own changes and findings.
+
+### `setup`
+
+`setup` reads a spec of both servers: each server's URL and sync account, the
+libraries, and the ordinary source users. A sync account is a dedicated user on
+one server that the other server's entry signs in as; the spec says whether it
+is an administrator. The spec is parsed and checked as a whole first; a problem
+exits 1 before the command signs in (R-PAIR-5). The checks cover field types,
+names Jellyfin accepts, HTTPS URLs as Peer Login requires (R-LOGIN-7),
+duplicate names and paths, sync accounts that double as a spec user or as this
+server's administrator, and history sync through a limited source account.
+
+Each run signs in to its own server, as `status` does, and does only that
+server's part. The part that needs the peer waits until `setup` has run there:
+
+| Role | Steps |
+| --- | --- |
+| Source | Create missing spec users from their password files; create missing libraries; create its sync account; grant it caller access; add an entry for the replica |
+| Replica | Create missing libraries in `--replica-root`; create its sync account; grant it caller access; add an entry for the source; add mappings; enable them once the link check passes |
+
+From a fresh pair, running it on the source, the replica, the source, and the
+replica again sets up everything except users who have not signed in to the
+replica yet. Each run reports what it waits for.
+
+**Adding, never rewriting (R-PAIR-6).** Every step creates what is missing and
+checks what exists. An existing item that contradicts the spec is reported as
+a conflict with a fix, and the run builds nothing on it. Users are matched by
+name ignoring case, libraries by name, entries by server ID as Server Sync's
+`FindServerById` does, library mappings by source path, user mappings by local
+or source user, and grants by user ID. A sync account must have the
+administrator flag the spec asks for, on both servers; setup never changes it.
+An existing user's password is never read or changed.
+
+The exceptions are what the spec asks to have on: each spec mapping is enabled
+once the replica's link check passes (R-PAIR-7), with `EnableContentSync` for
+library mappings and `EnableHistorySync` for user mappings. A rerun turns them
+on again if they were turned off in the dashboard; to stop syncing a library or
+user, remove it from the spec first.
+
+**Configuration writes.** Server Sync keeps entries, mappings, and grants in one
+document that the dashboard and Server Sync's own tasks also save, whole, with
+no version check. Each write therefore reads the document, replaces every
+stored key with the kept-key placeholder, applies the run's edits to that
+fresh copy, and posts it if an edit changed something. Edits are pure
+functions over the document's JSON, so whatever changed since the run's
+earlier reads is kept. A dashboard save between that read and the post can
+still be lost; the operator docs say not to edit during a run.
+
+**Sync accounts and entries.** A new sync account gets its password from the
+spec's file. A limited one sees only the spec's libraries
+(`EnableAllFolders` off). An existing account's library access is reported,
+not changed. A new entry needs the peer's server ID, from its anonymous
+`/System/Info/Public`, and a token: Server Sync's `POST /Sync/Authenticate`
+signs in to the peer's sync account and returns it (R-PAIR-3). That sign-in
+revokes the token Server Sync got earlier for the same account, so setup
+signs in only when no entry has the peer's server ID. A token whose entry
+could not be saved stays on the peer until the next sign-in revokes it.
+
+| Entry | Mode | Settings |
+| --- | --- | --- |
+| Source's entry for the replica | Push | Allow Linking; with a limited source account, its link fallback user is that account |
+| Replica's entry for the source | Pull | — |
+
+A standard user's key streams links only as itself, so the source streams for
+every replica user as its limited sync account. With an administrator account,
+the source trusts the user the replica names, from the replica's user mapping.
+
+**Libraries (R-PAIR-8).** A new library is created with
+`SaveLocalMetadata`, `SaveSubtitlesWithMedia`, `SaveLyricsWithMedia`, and
+`SaveTrickplayWithMedia` off, and `MetadataSavers` empty, so nothing is written
+beside the media; Jellyfin starts its scan. An existing source library that
+writes beside the media is reported.
+
+**Mappings (R-PAIR-7).** The replica asks its own Server Sync for the source's
+libraries and users, with the entry's key, as the dashboard does. Each spec
+library becomes a Link mapping from its source path to its replica folder,
+matched by library name. With `content = "all"` its filter is AllowAll; a
+whitelist is resolved against the source's top-level items, matching an item
+at a listed path or inside a listed folder, because a movie's path is its
+video file. Server Sync finds whitelisted content by item ID and matches hints
+by path, so each filtered item carries both. A rerun adds new whitelist items
+and keeps items added in the dashboard. A spec user is mapped to the replica's
+Peer Login user with the same name once that user has signed in; a local
+replica account with that name is a conflict (R-LOGIN-9). New mappings are
+disabled unless this run's link check passed, and a whitelist with an item the
+source lacks keeps its mapping disabled.
+
 Server Sync's caller whitelist matches the address a call comes from.
 Jellyfin honours forwarded headers only for configured known proxies, and
 `network.xml` configures none, so peer calls through a local proxy such as
@@ -311,15 +412,15 @@ Tailscale Serve arrive from 127.0.0.1. Peer grants therefore need no locations.
 | Test | Covers | Runs in |
 | --- | --- | --- |
 | Plugin unit tests (package check phase) | R-LOGIN-1 to R-LOGIN-9 | `checks.plugin` |
-| `sea-nettle` unit tests and type checks (package check phase) | R-PAIR-2, R-PAIR-4 | `checks.tool` |
+| `sea-nettle` unit tests and type checks (package check phase) | R-PAIR-2 to R-PAIR-6 | `checks.tool` |
 | Module eval tests (`nix/tests/modules.nix`) | R-SERVER-1 to R-SERVER-4, R-SERVER-6, R-LOGIN-7, R-PAIR-2 | `checks.modules` |
 | Script tests (`nix/tests/scripts.nix`) | R-SERVER-1, R-SERVER-3, R-SERVER-5 | `checks.scripts` |
-| VM test (`nix/tests/replica-login.nix`) | R-LOGIN-1 to R-LOGIN-6, R-LOGIN-8, R-LOGIN-9, R-SERVER-1 to R-SERVER-6, R-PAIR-1 to R-PAIR-4 | `heavyChecks.replica-login` |
+| VM test (`nix/tests/replica-login.nix`) | R-LOGIN-1 to R-LOGIN-6, R-LOGIN-8, R-LOGIN-9, R-SERVER-1 to R-SERVER-6, R-PAIR-1 to R-PAIR-8 | `heavyChecks.replica-login` |
 
 The VM test runs a source and a replica. Each serves HTTPS through nginx with a
-test certificate that the other trusts. Until `sea-nettle` can set up a pair,
-the test script configures Server Sync's entries, grants, and mappings through
-its API, as the dashboard does. Tailscale Serve needs a
+test certificate that the other trusts. `sea-nettle setup` sets up the pair
+from one spec, including a source outage, dashboard edits, conflicts, a
+deferred user, and a linked movie streamed through the replica. Tailscale Serve needs a
 tailnet, so the source's `jellyfin-serve` keeps its dependencies but runs stub
 commands.
 

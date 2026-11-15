@@ -112,18 +112,19 @@ class Jellyfin:
         )
 
 
-def read_password(path: Path) -> str:
+def read_secret(path: Path, *, what: str) -> str:
+    """A password from a file; trailing newlines are not part of it."""
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as e:
         raise Fatal(
-            f"Cannot read the administrator password file {path}: {e.strerror}. "
+            f"Cannot read {what} {path}: {e.strerror}. "
             "It is usually readable by root only; run sea-nettle with sudo."
         ) from e
     # The same rule as jellyfin-initial-admin, which set the password from this file.
     password = re.sub(r"\n+$", "", content)
     if not password:
-        raise Fatal(f"The administrator password file {path} is empty.")
+        raise Fatal(f"{what[0].upper()}{what[1:]} {path} is empty.")
     return password
 
 
@@ -133,7 +134,7 @@ def signed_in(url: str, *, name: str, password_file: Path) -> Generator[Jellyfin
 
     A failed sign-out leaves the yielded client's `signed_out` false.
     """
-    password = read_password(password_file)
+    password = read_secret(password_file, what="the administrator password file")
     try:
         answer = as_object(
             Jellyfin(url).request(

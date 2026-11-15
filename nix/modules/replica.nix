@@ -8,6 +8,7 @@
 
 let
   cfg = config.sea-nettle.jellyfin.replica;
+  inherit (config.sea-nettle.jellyfin) setup;
   jellyfin = config.services.jellyfin;
   configurations = "${jellyfin.dataDir}/plugins/configurations";
 
@@ -58,11 +59,15 @@ in
     example = "https://source.example.net:8445";
     description = ''
       Source server URL for Peer Login. It is written only when the plugin has
-      no configuration yet; later changes belong in the dashboard.
+      no configuration yet; later changes belong in the dashboard. Defaults to
+      the setup spec's source URL.
     '';
   };
 
   config = {
+    sea-nettle.jellyfin.role = "replica";
+    sea-nettle.jellyfin.replica.sourceUrl = lib.mkIf (setup != null) (lib.mkDefault setup.source.url);
+
     assertions = [
       {
         assertion = lib.versions.majorMinor jellyfin.package.version == "12.4";
@@ -87,6 +92,12 @@ in
       ${configurations} = directory;
       "${configurations}/Jellyfin.Plugin.ServerSync.xml" = seed serverSyncConfig;
       "${configurations}/Jellyfin.Plugin.PeerLogin.xml" = seed peerLoginConfig;
-    };
+    }
+    # The setup spec's replica libraries; `sea-nettle setup` creates them here.
+    // lib.optionalAttrs (setup != null) (
+      lib.mapAttrs' (
+        key: _: lib.nameValuePair "${jellyfin.dataDir}/replica/${key}" directory
+      ) setup.libraries
+    );
   };
 }

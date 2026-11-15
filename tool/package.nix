@@ -29,7 +29,7 @@ python3Packages.buildPythonApplication {
   '';
 
   meta = {
-    description = "Checks a sea-nettle server's Server Sync setup";
+    description = "Sets up and checks a sea-nettle server's Server Sync pair";
     mainProgram = "sea-nettle";
   };
 }

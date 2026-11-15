@@ -66,6 +66,45 @@ let
     { sea-nettle.jellyfin.replica.sourceUrl = "https://source.example.net:8445"; }
   ];
 
+  setupSpec = {
+    source = {
+      url = "https://source.example.net:8445";
+      syncAccount = {
+        name = "replica-sync";
+        passwordFile = "/run/secrets/replica-sync";
+        administrator = true;
+      };
+    };
+    replica = {
+      url = "https://replica.example.net:8445";
+      syncAccount = {
+        name = "source-sync";
+        passwordFile = "/run/secrets/source-sync";
+        administrator = false;
+      };
+    };
+    libraries.movies = {
+      type = "movies";
+      sourcePath = "/srv/media/movies";
+      content = "all";
+    };
+    users.alice = {
+      passwordFile = "/run/secrets/alice";
+      syncHistory = true;
+    };
+  };
+
+  setupReplica = eval [
+    ../modules/replica.nix
+    { sea-nettle.jellyfin.setup = setupSpec; }
+  ];
+
+  wrapperScript =
+    config:
+    readScript (
+      lib.getExe (lib.findFirst (p: lib.getName p == "sea-nettle") null config.environment.systemPackages)
+    );
+
   unit = config: config.systemd.services.jellyfin;
   sandbox = config: (unit config).serviceConfig;
   readScript = path: builtins.readFile path;
@@ -209,6 +248,59 @@ let
           source
           replica
         ];
+
+    # R-PAIR-2
+    "setup gets the spec and its role, and the spec holds only password file paths" =
+      let
+        script = wrapperScript setupReplica;
+        specPath = lib.head (builtins.match ".*--spec ([^ ]+) .*" script);
+        spec = builtins.fromJSON (builtins.readFile specPath);
+      in
+      lib.hasInfix "--role replica --replica-root /var/lib/jellyfin/replica" script
+      &&
+        spec.libraries == [
+          {
+            key = "movies";
+            name = "movies";
+            type = "movies";
+            sourcePath = "/srv/media/movies";
+            content = "all";
+          }
+        ]
+      &&
+        spec.users == [
+          {
+            name = "alice";
+            passwordFile = "/run/secrets/alice";
+            syncHistory = true;
+          }
+        ]
+      && spec.source.syncAccount.passwordFile == "/run/secrets/replica-sync"
+      && !lib.hasInfix "--spec" (wrapperScript replica)
+      && !(builtins.tryEval (
+        wrapperScript (eval [
+          ../modules/replica.nix
+          {
+            sea-nettle.jellyfin.setup = lib.recursiveUpdate setupSpec {
+              users.alice.passwordFile = "${pkgs.writeText "pw" "secret"}";
+            };
+          }
+        ])
+      )).success;
+
+    "setup on the source passes its role and no replica folder" =
+      let
+        script = wrapperScript (eval [
+          ../modules/jellyfin.nix
+          ../modules/server-sync.nix
+          { sea-nettle.jellyfin.setup = setupSpec; }
+        ]);
+      in
+      lib.hasInfix "--role source" script && !lib.hasInfix "--replica-root" script;
+
+    "the replica gets a folder per setup library and the spec's source URL for Peer Login" =
+      (tmpfiles setupReplica) ? "${dataDir setupReplica}/replica/movies"
+      && setupReplica.sea-nettle.jellyfin.replica.sourceUrl == "https://source.example.net:8445";
 
     "Serve without Tailscale fails evaluation" = assertionFails (eval [
       ../modules/jellyfin.nix
