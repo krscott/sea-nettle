@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from .jellyfin import Jellyfin, Unanswered
 from .model import (
-    KEPT_API_KEY,
     SERVER_SYNC_ID,
     Entry,
     LinkCheck,
@@ -48,22 +47,12 @@ def collect(api: Jellyfin) -> Snapshot:
 
 
 def check_link(api: Jellyfin, entry: Entry) -> LinkCheck:
-    """Server Sync's own link check, run as the dashboard's Check Link button runs it.
-
-    The kept-key placeholder makes Server Sync use the key it stores for the entry with
-    this key, and only at its saved URL, so this command never handles the key.
-    """
+    """Server Sync's own link check, run as the dashboard's Check Link button runs it."""
     try:
         answer = api.request(
             "POST",
             "/Sync/Hints/CheckPeer",
-            {
-                "ServerUrl": entry.url,
-                "ApiKey": KEPT_API_KEY,
-                "ServerKey": entry.key,
-                "AllowPrivateNetwork": entry.allow_private_network,
-                "Mode": entry.mode,
-            },
+            {**entry.peer_request(), "Mode": entry.mode},
             timeout=CHECK_TIMEOUT,
         )
     except Unanswered:

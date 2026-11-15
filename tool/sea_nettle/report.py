@@ -49,15 +49,29 @@ class Peer:
 @dataclass(kw_only=True, frozen=True)
 class Report:
     server: str
+    # What `setup` changed in this run; `status` changes nothing.
+    changes: tuple[str, ...]
     peers: tuple[Peer, ...]
     attention: tuple[Attention, ...]
+    # What `setup` waits for that only time can bring, such as a user's first sign-in; it
+    # does not count as needing attention.
+    waiting: tuple[Attention, ...]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
 
     def to_text(self) -> str:
-        lines = [f"Server Sync on {self.server}"]
+        lines: list[str] = []
+        if self.changes:
+            lines.append("Changed:")
+            lines += [f"- {c}" for c in self.changes]
+        lines.append(f"Server Sync on {self.server}")
         lines += [f"  Peer {p.name} at {p.url}: {p.link}" for p in self.peers]
+        if self.waiting:
+            lines.append("Waiting:")
+            for item in self.waiting:
+                lines.append(f"- {item.subject}: {item.problem}")
+                lines.append(f"  {item.fix}")
         if not self.attention:
             lines.append("Nothing needs attention.")
             return "\n".join(lines) + "\n"
@@ -73,11 +87,21 @@ def checked_entries(entries: tuple[Entry, ...]) -> tuple[Entry, ...]:
     return tuple(e for e in entries if e.enabled and e.url and e.has_api_key)
 
 
-def build(snapshot: Snapshot, *, expected_version: str) -> Report:
+def build(
+    snapshot: Snapshot,
+    *,
+    expected_version: str,
+    changes: tuple[str, ...] = (),
+    attention: tuple[Attention, ...] = (),
+    waiting: tuple[Attention, ...] = (),
+) -> Report:
+    """The report on `snapshot`, after `setup`'s changes and the items it found."""
     return Report(
         server=snapshot.server_name,
+        changes=changes,
         peers=tuple(_peer(e, snapshot.checks.get(e.key)) for e in snapshot.entries),
-        attention=tuple(assess(snapshot, expected_version=expected_version)),
+        attention=attention + tuple(assess(snapshot, expected_version=expected_version)),
+        waiting=waiting,
     )
 
 
@@ -103,8 +127,8 @@ def assess(snapshot: Snapshot, *, expected_version: str) -> list[Attention]:
                 code="no-peers",
                 subject="Server Sync",
                 problem="it has no peer entries.",
-                fix=f"Add the other server under {SERVERS}, as described under "
-                '"Dashboard setup" in sea-nettle\'s nix/modules/README.md.',
+                fix="Run `sudo sea-nettle setup` on both servers, as described under "
+                '"Setting up a pair" in sea-nettle\'s nix/modules/README.md.',
             )
         )
     items += duplicate_server_ids(snapshot.entries)
@@ -335,7 +359,15 @@ def _is_guid(value: str) -> bool:
 
 
 def unmapped_users(entries: tuple[Entry, ...], users: tuple[User, ...]) -> list[Attention]:
-    """Peer Login creates replica users on first sign-in; mapping them is a later step."""
+    """Peer Login users that an administrator's key cannot stream links or history for.
+
+    Peer Login creates replica users on first sign-in; mapping them is a later step. A
+    source that holds an administrator's key streams a link as the user the replica maps,
+    so an unmapped user cannot play links. A standard user's key streams only as its own
+    user and carries only that user's history, so mappings add nothing for it.
+    """
+    if not any(e.enabled and e.access_level.lower() != "user" for e in entries):
+        return []
     mapped = {
         normalize_id(m.local_id) for e in entries if e.enabled for m in e.user_mappings if m.enabled
     }
@@ -343,10 +375,12 @@ def unmapped_users(entries: tuple[Entry, ...], users: tuple[User, ...]) -> list[
         Attention(
             code="unmapped-user",
             subject=f"User {user.name}",
-            problem="this Peer Login user has no user mapping, so their watch history "
-            "and settings do not sync.",
-            fix=f"Under {SERVERS}, open the source's entry and map {user.name} to "
-            "their source user in step 4 Users.",
+            problem="this Peer Login user has no user mapping, so they cannot play links "
+            "from the source, and their watch history does not sync.",
+            fix=f"If {user.name} is not in the users of sea-nettle's setup spec, add them; "
+            "then run `sudo sea-nettle setup` on the replica. Or, under "
+            f"{SERVERS}, open the source's entry and map {user.name} to their source user in "
+            "step 4 Users.",
         )
         for user in users
         if user.peer_login and normalize_id(user.id) not in mapped

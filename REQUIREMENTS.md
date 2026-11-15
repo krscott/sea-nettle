@@ -152,11 +152,13 @@ do not migrate or backfill unrelated requirements.
   to every local user. The Nix store is world-readable.
 
 - **R-PAIR-3** [test] The `sea-nettle` commands end every Jellyfin session they
-  open before they exit.
+  open for their own calls before they exit. The only session that outlives a
+  run is a sync account's token, which `sea-nettle setup` stores as the key of
+  a new peer entry.
 
   Rationale: The commands sign in as an administrator. A token left behind stays
   valid until someone revokes it, and each one shows up as a device in the
-  dashboard.
+  dashboard. A peer entry's key must keep working for the pair to sync.
 
 - **R-PAIR-4** [test] `sea-nettle status` reports each of the following, with
   how to fix it, and exits with a distinct status when it reports any of them:
@@ -167,3 +169,41 @@ do not migrate or backfill unrelated requirements.
   Rationale: Otherwise these problems are silent. Content, history, and links
   stop flowing, and nothing points at the cause. The exit status lets scripts
   and tests gate on a healthy pair.
+
+- **R-PAIR-5** [test] `sea-nettle setup` checks the whole setup spec before it
+  changes anything. It refuses a spec that asks for something its sync accounts
+  cannot do, such as syncing other users' watch history through a limited
+  source account, and names each problem.
+
+  Rationale: A spec that can never work would leave half-applied configuration
+  to clean up by hand. Refusing it keeps a sync account's privileges a
+  deliberate choice; setup never grants administrator rights to make a spec
+  work.
+
+- **R-PAIR-6** [test] `sea-nettle setup` adds what the spec asks for and
+  enables the spec's mappings and the sync features they use. Otherwise it never
+  removes, disables, or rewrites existing users, libraries, peer entries, keys,
+  mappings, or caller grants. It never changes a user's password or
+  administrator rights. When existing configuration contradicts the spec, it
+  reports the conflict and how to resolve it, and leaves that configuration
+  unchanged. A run with nothing to add or enable changes nothing.
+
+  Rationale: Operators keep tuning a pair in the dashboard after setup. Setup
+  must be safe to rerun at any time, including after a partial failure, without
+  undoing or fighting that work.
+
+- **R-PAIR-7** [test] `sea-nettle setup` grants peer caller access only to the
+  spec's sync accounts. It enables a library or user mapping only after this
+  server's link check to the peer passes; until then the mapping stays disabled.
+
+  Rationale: An interrupted or failed run must never leave broader permissions
+  than the spec asks for, or let content and history flow before the pair is
+  validated.
+
+- **R-PAIR-8** [test] A library that `sea-nettle setup` creates keeps generated
+  metadata, artwork, subtitles, lyrics, and trickplay images in Jellyfin's own
+  state, never beside the media.
+
+  Rationale: The source media may be the only copy and is read-only to
+  Jellyfin (R-SERVER-4). A library set to write beside it would fail those
+  writes and lose what it generated.

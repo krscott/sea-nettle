@@ -162,8 +162,8 @@ def test_disabled_entry_is_skipped() -> None:
     disabled = entry(IsEnabled=False, ServerId="")
     assert checked_entries((disabled,)) == ()
     report = build(snapshot(disabled), expected_version=VERSION)
-    # Alice's only mapping is on a disabled entry.
-    assert [a.code for a in report.attention] == ["unmapped-user"]
+    # No enabled entry streams links, so Alice's missing mapping does not matter yet.
+    assert [a.code for a in report.attention] == []
     assert report.peers[0].link == "disabled, not checked"
 
 
@@ -246,6 +246,12 @@ def test_unmapped_peer_login_user() -> None:
     assert item.subject == "User Alice"
 
 
+def test_limited_key_needs_no_user_mappings() -> None:
+    # A standard user's key streams only as itself, so the source's fallback user covers
+    # every replica user.
+    assert codes(snapshot(entry(AccessLevel="User", UserMappings=[]))) == []
+
+
 def test_disabled_user_mapping_leaves_user_unmapped() -> None:
     disabled: dict[str, object] = {
         "SourceUserId": ALICE_SOURCE_ID,
@@ -271,4 +277,4 @@ def test_text_report_lists_problem_and_fix() -> None:
     text = build(snapshot(entry(UserMappings=[])), expected_version=VERSION).to_text()
     assert "Needs attention:" in text
     assert "- User Alice: this Peer Login user has no user mapping" in text
-    assert "  Fix: Under Dashboard > Server Sync > Servers" in text
+    assert "  Fix: If Alice is not in the users of sea-nettle's setup spec, add them" in text

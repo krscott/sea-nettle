@@ -12,6 +12,49 @@ let
     done
   '';
 
+  # Two short videos for the source's media; the setup spec whitelists one.
+  media = pkgs.runCommand "test-media" { nativeBuildInputs = [ pkgs.ffmpeg-headless ]; } ''
+    mkdir "$out"
+    for name in clip other; do
+      ffmpeg -loglevel error -f lavfi -i testsrc=duration=3:size=160x120:rate=10 -c:v mpeg4 "$out/$name.mp4"
+    done
+  '';
+
+  # The same spec on both servers; each `sea-nettle setup` run sets up its own side.
+  setupSpec = {
+    source = {
+      url = "https://source";
+      # An administrator, so the watch history of every mapped user syncs.
+      syncAccount = {
+        name = "replica-sync";
+        passwordFile = "/run/replica-sync-password";
+        administrator = true;
+      };
+    };
+    replica = {
+      url = "https://replica";
+      syncAccount = {
+        name = "source-sync";
+        passwordFile = "/run/source-sync-password";
+        administrator = false;
+      };
+    };
+    libraries.movies = {
+      name = "Movies";
+      type = "movies";
+      sourcePath = "/srv/media/movies";
+      content.whitelist = [ "Clip (2020)" ];
+    };
+    # Every replica user is mapped: the source streams links only for mapped users.
+    users = {
+      alice = { };
+      bob = { };
+      source-admin = { };
+      carol.passwordFile = "/run/carol-password";
+    };
+    syncHistory = true;
+  };
+
   server = {
     # Jellyfin refuses to start with less than 2 GiB free in its data directory.
     virtualisation.diskSize = 4096;
@@ -19,6 +62,7 @@ let
     environment.systemPackages = [ pkgs.util-linux ];
     # The test writes the password at runtime, so it never reaches the Nix store (R-SERVER-6).
     sea-nettle.jellyfin.initialAdmin.passwordFile = "/run/jellyfin-admin-password";
+    sea-nettle.jellyfin.setup = setupSpec;
     security.pki.certificateFiles = [
       "${certs}/source.crt"
       "${certs}/replica.crt"
@@ -73,25 +117,30 @@ in
       (https "replica")
       ../modules/replica.nix
     ];
-    sea-nettle.jellyfin = {
-      initialAdmin.name = "replica-admin";
-      replica.sourceUrl = "https://source";
-    };
+    # Peer Login's source URL defaults to the setup spec's.
+    sea-nettle.jellyfin.initialAdmin.name = "replica-admin";
     # The test re-runs activation (R-SERVER-2).
     system.switch.enable = true;
   };
 
   testScript = ''
+    import hashlib
     import itertools
     import json
+    import re
     import shlex
-    import uuid
+    import time
 
     PEER_LOGIN = "74c2e693-6ab7-40fa-858d-c752d48cb45c"
     SERVER_SYNC = "ebd650b5-6f4c-4ccb-b10d-23dffb3a7286"
     PEER_PROVIDER = "Jellyfin.Plugin.PeerLogin.PeerAuthenticationProvider"
     ADMIN_PASSWORD_FILE = "/run/jellyfin-admin-password"
-    SYNC_PASSWORD = "sync-pw"
+    # Password files the setup spec names.
+    PASSWORDS = {
+        "/run/replica-sync-password": "replica-sync-pw",
+        "/run/source-sync-password": "source-sync-pw",
+        "/run/carol-password": "carol-1",
+    }
 
 
     # Jellyfin revokes a user's earlier token when they sign in again from the same device.
@@ -138,8 +187,12 @@ in
         wait_for_jellyfin(machine)
 
 
+    def write_secret(machine, path, password):
+        machine.succeed(f"(umask 077; printf '%s\\n' {shlex.quote(password)} >{path})")
+
+
     def write_admin_password(machine, password):
-        machine.succeed(f"(umask 077; printf '%s\\n' {shlex.quote(password)} >{ADMIN_PASSWORD_FILE})")
+        write_secret(machine, ADMIN_PASSWORD_FILE, password)
 
 
     def wizard_completed(machine):
@@ -152,6 +205,10 @@ in
 
     def admin_log(machine):
         return machine.succeed("journalctl -b -o cat -u jellyfin-initial-admin.service")
+
+
+    def source_user_id(name):
+        return next(u["Id"] for u in api(source, "GET", "/Users", token=source_admin) if u["Name"] == name)
 
 
     def replica_user(name):
@@ -177,38 +234,18 @@ in
         edit_server_sync_config(machine, token, lambda c: c["Servers"][0].update(fields))
 
 
-    def allow_caller(machine, token, user):
-        grant = {"UserId": user["Id"], "UserName": user["Name"], "Locations": []}
-        edit_server_sync_config(machine, token, lambda c: c["PeerCallerGrants"].append(grant))
+    def set_mapping(machine, token, **fields):
+        edit_server_sync_config(machine, token, lambda c: c["Servers"][0]["LibraryMappings"][0].update(fields))
 
 
-    # Tokens and stored keys that `sea-nettle status` must never print (R-PAIR-2).
-    sync_tokens = []
-
-
-    def add_peer(machine, token, name, url, username, mode):
-        """Adds a peer entry as the dashboard's Sign In does."""
-        signed = api(machine, "POST", "/Sync/Authenticate", {"ServerUrl": url, "Username": username, "Password": SYNC_PASSWORD}, token=token)
-        assert signed["Success"], signed
-        sync_tokens.append(signed["AccessToken"])
-        entry = {
-            "Key": uuid.uuid4().hex,
-            "Name": name,
-            "Url": url,
-            "ApiKey": signed["AccessToken"],
-            "AuthenticatedUser": signed["Username"],
-            "AuthenticatedUserId": signed["UserId"],
-            "ServerName": signed["ServerName"],
-            "ServerId": signed["ServerId"],
-            "AccessLevel": "Administrator" if signed["IsAdministrator"] else "User",
-            "Mode": mode,
-        }
-        edit_server_sync_config(machine, token, lambda c: c["Servers"].append(entry))
-        return entry
+    def stable_server_sync_config(machine, token):
+        # Server Sync's tasks stamp their last run times.
+        return {k: v for k, v in server_sync_config(machine, token).items() if not k.startswith("Last")}
 
 
     def configuration(machine, token):
-        """What `sea-nettle status` must leave unchanged (R-PAIR-1)."""
+        """What `sea-nettle status`, and a `sea-nettle setup` with nothing to do, leave unchanged
+        (R-PAIR-1, R-PAIR-6)."""
         active = plugin(machine, token, SERVER_SYNC)["Status"] == "Active"
         # Jellyfin's sign-in bookkeeping: every sign-in, including the command's own, updates
         # these, and a failed one counts toward lockout.
@@ -218,13 +255,22 @@ in
             user["Policy"] = {k: v for k, v in user["Policy"].items() if k != "InvalidLoginAttemptCount"}
             users.append(user)
         return (
-            server_sync_config(machine, token) if active else None,
+            stable_server_sync_config(machine, token) if active else None,
             users,
             api(machine, "GET", "/Library/VirtualFolders", token=token),
         )
 
 
-    status_outputs = []
+    # Everything the commands printed, for R-PAIR-2.
+    outputs = []
+
+
+    def no_own_session(machine, token):
+        """R-PAIR-3: the run's own session has ended."""
+        devices = api(machine, "GET", "/Devices", token=token)["Items"]
+        assert not [d for d in devices if d.get("AppName") == "sea-nettle"], devices
+        sessions = api(machine, "GET", "/Sessions", token=token)
+        assert not [s for s in sessions if s.get("Client") == "sea-nettle"], sessions
 
 
     def status(machine, token, expect, text=False):
@@ -233,13 +279,10 @@ in
         flags = "" if text else " --json"
         code, out = machine.execute(f"sea-nettle status{flags} 2>/tmp/status-stderr")
         err = machine.succeed("cat /tmp/status-stderr")
-        status_outputs.append(out + err)
+        outputs.append(out + err)
         assert code == expect, f"{machine.name}: status exited {code}, expected {expect}: {out}{err}"
         assert configuration(machine, token) == before, f"{machine.name}: status changed the configuration"
-        devices = api(machine, "GET", "/Devices", token=token)["Items"]
-        assert not [d for d in devices if d.get("AppName") == "sea-nettle"], devices
-        sessions = api(machine, "GET", "/Sessions", token=token)
-        assert not [s for s in sessions if s.get("Client") == "sea-nettle"], sessions
+        no_own_session(machine, token)
         if text or code not in (0, 3):
             # A failed run prints its error to stderr.
             return out + err
@@ -248,7 +291,40 @@ in
 
     def attention(machine, token, expect):
         """The attention codes of a status report."""
-        return sorted(a["code"] for a in status(machine, token, expect)["attention"])
+        return codes(status(machine, token, expect))
+
+
+    def codes(report):
+        return sorted(a["code"] for a in report["attention"])
+
+
+    def setup(machine, token, expect, command="sea-nettle setup --json"):
+        """Runs `sea-nettle setup` and returns its report, or its output if it failed."""
+        code, out = machine.execute(f"{command} 2>/tmp/setup-stderr")
+        err = machine.succeed("cat /tmp/setup-stderr")
+        outputs.append(out + err)
+        assert code == expect, f"{machine.name}: setup exited {code}, expected {expect}: {out}{err}"
+        no_own_session(machine, token)
+        return json.loads(out) if code in (0, 3) else out + err
+
+
+    def wait_for(condition, timeout=300):
+        deadline = time.monotonic() + timeout
+        while not condition():
+            assert time.monotonic() < deadline, "timed out"
+            time.sleep(2)
+
+
+    def replica_entry():
+        return server_sync_config(replica, replica_admin)["Servers"][0]
+
+
+    def library(machine, token, name):
+        return next(l for l in api(machine, "GET", "/Library/VirtualFolders", token=token) if l["Name"] == name)
+
+
+    def movies(machine, token, library_id):
+        return api(machine, "GET", f"/Items?ParentId={library_id}&Recursive=true&IncludeItemTypes=Movie", token=token)["Items"]
 
 
     start_all()
@@ -416,60 +492,174 @@ in
     with subtest("R-PAIR-4: status reports a server without peers"):
         assert attention(source, source_admin, 3) == ["no-peers"]
 
-    # Each server's key on the other belongs to a dedicated account. The replica's key on the
-    # source is an administrator's, so user mappings sync; the source's key is a standard user's.
-    replica_sync = api(source, "POST", "/Users/New", {"Name": "replica-sync", "Password": SYNC_PASSWORD}, token=source_admin)
-    replica_sync["Policy"]["IsAdministrator"] = True
-    api(source, "POST", f"/Users/{replica_sync['Id']}/Policy", replica_sync["Policy"], token=source_admin, expect=204)
-    source_sync = api(replica, "POST", "/Users/New", {"Name": "source-sync", "Password": SYNC_PASSWORD}, token=replica_admin)
+    for machine in [source, replica]:
+        for path, password in PASSWORDS.items():
+            write_secret(machine, path, password)
+    source.succeed(
+        "mkdir -p '/srv/media/movies/Clip (2020)' '/srv/media/movies/Other (2021)'"
+        " && cp ${media}/clip.mp4 '/srv/media/movies/Clip (2020)/Clip (2020).mp4'"
+        " && cp ${media}/other.mp4 '/srv/media/movies/Other (2021)/Other (2021).mp4'"
+    )
 
-    with subtest("R-PAIR-4: status reports a peer that does not list this server"):
-        allow_caller(source, source_admin, replica_sync)
-        source_entry = add_peer(replica, replica_admin, "source", "https://source", "replica-sync", "Pull")
-        assert "peer-not-listed" in attention(replica, replica_admin, 3)
+    def setup_command(machine, edit):
+        """The wrapper's `sea-nettle setup --json` command, with `edit` applied to its spec."""
+        wrapper = machine.succeed("cat $(readlink -f $(command -v sea-nettle))")
+        found = re.search(r"--spec (\S+)", wrapper)
+        assert found, wrapper
+        spec_path = found.group(1)
+        spec = json.loads(machine.succeed(f"cat {spec_path}"))
+        edit(spec)
+        machine.succeed(f"echo {shlex.quote(json.dumps(spec))} >/tmp/edited-spec.json")
+        command = next(l for l in wrapper.splitlines() if l.startswith("exec "))
+        return command.removeprefix("exec ").replace(spec_path, "/tmp/edited-spec.json").replace('"$@"', "setup --json")
 
-    with subtest("R-PAIR-4: status pairs both directions and reports unmapped Peer Login users"):
-        allow_caller(replica, replica_admin, source_sync)
-        add_peer(source, source_admin, "replica", "https://replica", "source-sync", "Push")
-        assert attention(source, source_admin, 0) == []
-        assert attention(replica, replica_admin, 3) == ["unmapped-user"] * 3
+    with subtest("R-PAIR-5: setup refuses an unsupported spec before changing anything"):
+        command = setup_command(source, lambda spec: spec["source"]["syncAccount"].update(administrator=False))
+        before = configuration(source, source_admin)
+        out = setup(source, source_admin, 1, command=command)
+        assert "nothing was changed" in out and "syncHistory needs source.syncAccount.administrator = true" in out, out
+        assert configuration(source, source_admin) == before
+
+    with subtest("R-PAIR-6, R-PAIR-8: setup on the source creates users, the library, and its sync account"):
+        report = setup(source, source_admin, 3)
+        # The replica has no sync account for the source yet.
+        assert codes(report) == ["no-peers", "setup-peer-sign-in"], report
+        assert report["changes"] == [
+            "Created user carol",
+            "Created library Movies at /srv/media/movies",
+            "Created the administrator sync account replica-sync",
+            "Allowed replica-sync to call this server's Server Sync",
+        ], report
+        options = library(source, source_admin, "Movies")["LibraryOptions"]
+        assert not options["SaveLocalMetadata"] and not options["MetadataSavers"], options
+        assert not options["SaveSubtitlesWithMedia"] and not options["SaveTrickplayWithMedia"], options
+        sign_in(source, "carol", "carol-1")
+
+    with subtest("R-PAIR-6: setup on the replica sets up its own side while the source is unreachable"):
+        source.succeed("systemctl stop nginx.service")
+        report = setup(replica, replica_admin, 3)
+        assert "setup-peer-unreachable" in codes(report), report
+        assert report["changes"] == [
+            "Created library Movies at /var/lib/jellyfin/replica/movies",
+            "Created the limited sync account source-sync",
+            "Allowed source-sync to call this server's Server Sync",
+        ], report
+        source.succeed("systemctl start nginx.service")
+        source_sync = replica_user("source-sync")
+        assert not source_sync["Policy"]["IsAdministrator"] and not source_sync["Policy"]["EnableAllFolders"]
+
+    with subtest("R-PAIR-4, R-PAIR-7: mappings stay disabled until the link check passes"):
+        source_movies = library(source, source_admin, "Movies")["ItemId"]
+        wait_for(lambda: len(movies(source, source_admin, source_movies)) == 2)
+        report = setup(replica, replica_admin, 3)
+        assert {"peer-not-listed", "setup-mappings-disabled"} <= set(codes(report)), report
+        entry = replica_entry()
+        assert entry["Mode"] == "Pull" and entry["AccessLevel"] == "Administrator", entry
+        [mapping] = entry["LibraryMappings"]
+        assert not mapping["IsEnabled"] and mapping["StorageMode"] == "Link", mapping
+        assert [i["Name"] for i in mapping["FilteredItems"]] == ["Clip (2020)"], mapping
+        assert sorted(m["LocalUserName"] for m in entry["UserMappings"]) == ["Alice", "bob", "source-admin"], entry
+        assert not any(m["IsEnabled"] for m in entry["UserMappings"]), entry
+        assert {"peer-not-listed", "unmapped-user"} <= set(attention(replica, replica_admin, 3))
+
+    with subtest("R-PAIR-3, R-PAIR-6: setup ends the peer session it does not keep"):
+        # The replica's account is limited, so a spec that asks for an administrator conflicts
+        # only after Server Sync has signed in to it.
+        command = setup_command(source, lambda spec: spec["replica"]["syncAccount"].update(administrator=True))
+        before = configuration(source, source_admin)
+        assert "conflict-sync-account" in codes(setup(source, source_admin, 3, command=command))
+        assert configuration(source, source_admin) == before
+        devices = api(replica, "GET", "/Devices", token=replica_admin)["Items"]
+        assert not [d for d in devices if d.get("LastUserName") == "source-sync"], devices
+        sessions = api(replica, "GET", "/Sessions", token=replica_admin)
+        assert not [s for s in sessions if s.get("UserName") == "source-sync"], sessions
+
+    with subtest("R-PAIR-6: setup on the source adds the replica and pairs"):
+        report = setup(source, source_admin, 0)
+        assert report["changes"] == ["Added the replica at https://replica as a Push peer, signed in as source-sync"], report
+        entry = server_sync_config(source, source_admin)["Servers"][0]
+        assert entry["Mode"] == "Push" and entry["AllowLinking"], entry
+
+    with subtest("R-PAIR-7: setup enables the mappings once the link check passes, and defers new users"):
+        report = setup(replica, replica_admin, 0)
+        # Carol has not signed in to the replica yet; that needs no attention.
+        assert codes(report) == [] and [w["code"] for w in report["waiting"]] == ["setup-user-deferred"], report
+        config = server_sync_config(replica, replica_admin)
+        assert config["EnableContentSync"] and config["EnableHistorySync"]
+        entry = config["Servers"][0]
+        assert entry["LibraryMappings"][0]["IsEnabled"]
+        assert all(m["IsEnabled"] for m in entry["UserMappings"]), entry
         # Each direction logs one message on each side.
         for machine in [source, replica]:
             journal = machine.succeed("journalctl -b -u jellyfin.service")
             assert "it issued the secret this server presents to it" in journal
             assert "it now presents a secret this server issued" in journal
 
-    with subtest("R-PAIR-4: status passes once Peer Login users are mapped"):
-        api(source, "POST", "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=/srv/media", {}, token=source_admin, expect=204)
-        api(replica, "POST", "/Library/VirtualFolders?name=Replica%20Movies&collectionType=movies&paths=/var/lib/jellyfin/replica", {}, token=replica_admin, expect=204)
-        source_library = api(source, "GET", "/Library/VirtualFolders", token=source_admin)[0]
-        replica_library = api(replica, "GET", "/Library/VirtualFolders", token=replica_admin)[0]
-        source_users = {u["Name"]: u for u in api(source, "GET", "/Users", token=source_admin)}
+    with subtest("R-PAIR-6: a new user's mapping completes after their first replica sign-in"):
+        sign_in(replica, "carol", "carol-1")
+        report = setup(replica, replica_admin, 0)
+        assert report["changes"] == ["Mapped user carol to the source (enabled)"], report
 
-        def map_users_and_library(config):
-            entry = config["Servers"][0]
-            entry["LibraryMappings"].append({
-                "SourceLibraryId": source_library["ItemId"],
-                "SourceLibraryName": source_library["Name"],
-                "SourceRootPath": "/srv/media",
-                "LocalLibraryId": replica_library["ItemId"],
-                "LocalLibraryName": replica_library["Name"],
-                "LocalRootPath": "/var/lib/jellyfin/replica",
-                "StorageMode": "Link",
-                "IsEnabled": False,
-            })
-            for user in api(replica, "GET", "/Users", token=replica_admin):
-                if user["Policy"]["AuthenticationProviderId"] == PEER_PROVIDER:
-                    entry["UserMappings"].append({
-                        "SourceUserId": source_users[user["Name"]]["Id"],
-                        "SourceUserName": user["Name"],
-                        "LocalUserId": user["Id"],
-                        "LocalUserName": user["Name"],
-                    })
+    with subtest("R-PAIR-7: each server lets only the spec's sync account call its Server Sync"):
+        for machine, token, account in [(source, source_admin, "replica-sync"), (replica, replica_admin, "source-sync")]:
+            grants = server_sync_config(machine, token)["PeerCallerGrants"]
+            assert [(g["UserName"], g["Locations"]) for g in grants] == [(account, [])], grants
 
-        edit_server_sync_config(replica, replica_admin, map_users_and_library)
+    with subtest("R-PAIR-6: a rerun changes nothing"):
+        for machine, token in [(source, source_admin), (replica, replica_admin)]:
+            before = configuration(machine, token)
+            assert setup(machine, token, 0)["changes"] == []
+            assert configuration(machine, token) == before
+
+    with subtest("the replica links only the whitelisted movie and streams it from the source"):
+        links = "find /var/lib/jellyfin/replica/movies -name '*.strm'"
+        for _ in range(30):
+            api(replica, "POST", "/Sync/TriggerRefresh", token=replica_admin)
+            time.sleep(5)
+            api(replica, "POST", "/Sync/TriggerSync", token=replica_admin)
+            time.sleep(5)
+            if replica.succeed(links).strip():
+                break
+        assert replica.succeed(links).strip().splitlines() == ["/var/lib/jellyfin/replica/movies/Clip (2020)/Clip (2020).strm"], replica.succeed("find /var/lib/jellyfin/replica")
+        replica_movies = library(replica, replica_admin, "Movies")["ItemId"]
+        api(replica, "POST", "/Library/Refresh", token=replica_admin, expect=204)
+        wait_for(lambda: movies(replica, replica_admin, replica_movies))
+        [clip] = movies(replica, replica_admin, replica_movies)
+        alice_token = sign_in(replica, "alice", "alice-2")
+        # A player asks for playback info first; then the replica asks the source whether Alice may stream.
+        api(replica, "POST", f"/Items/{clip['Id']}/PlaybackInfo?userId={replica_user('Alice')['Id']}", {}, token=alice_token)
+        auth = f'Authorization: MediaBrowser Client="VM Test", Device="vm", DeviceId="vm-alice", Version="1", Token="{alice_token}"'
+        replica.succeed(f"curl -sf -o /tmp/clip.mp4 -H {shlex.quote(auth)} 'http://127.0.0.1:8096/Videos/{clip['Id']}/stream?static=true'")
+        expected = hashlib.sha256(open("${media}/clip.mp4", "rb").read()).hexdigest()
+        assert replica.succeed("sha256sum /tmp/clip.mp4").split()[0] == expected
+
+    with subtest("R-PAIR-6: setup keeps dashboard edits and reports conflicts without writing"):
+        set_entry(source, source_admin, LinkMaxStreams=2)
+        set_mapping(replica, replica_admin, ExcludeFromLinkCache=True)
+        api(source, "POST", f"/Users/{source_user_id('carol')}/Password", {"NewPw": "carol-2"}, token=source_admin, expect=204)
+        for machine, token in [(source, source_admin), (replica, replica_admin)]:
+            assert setup(machine, token, 0)["changes"] == []
+        assert server_sync_config(source, source_admin)["Servers"][0]["LinkMaxStreams"] == 2
+        assert replica_entry()["LibraryMappings"][0]["ExcludeFromLinkCache"]
+        # Setup never resets an existing user's password.
+        sign_in(source, "carol", "carol-2")
+        movies_library = library(source, source_admin, "Movies")
+        options = dict(movies_library["LibraryOptions"], SaveLocalMetadata=True)
+        set_options = lambda: api(source, "POST", "/Library/VirtualFolders/LibraryOptions", {"Id": movies_library["ItemId"], "LibraryOptions": options}, token=source_admin, expect=204)
+        set_options()
+        assert codes(setup(source, source_admin, 3)) == ["library-writes-beside-media"]
+        options["SaveLocalMetadata"] = False
+        set_options()
+        set_mapping(replica, replica_admin, StorageMode="Copy")
+        before = configuration(replica, replica_admin)
+        assert codes(setup(replica, replica_admin, 3)) == ["conflict-mapping"]
+        assert configuration(replica, replica_admin) == before
+        set_mapping(replica, replica_admin, StorageMode="Link")
+        # A changed URL would drop the stored key, so the direction stands in for an entry conflict.
+        set_entry(replica, replica_admin, Mode="Push")
+        assert "conflict-entry-mode" in codes(setup(replica, replica_admin, 3))
+        set_entry(replica, replica_admin, Mode="Pull")
         assert attention(replica, replica_admin, 0) == []
-        assert "Nothing needs attention." in status(replica, replica_admin, 0, text=True)
 
     with subtest("R-PAIR-4: status reports an unpaired peer"):
         set_entry(source, source_admin, IsEnabled=False)
@@ -482,7 +672,7 @@ in
         assert "entry-no-server-id" in attention(replica, replica_admin, 3)
         set_entry(replica, replica_admin, ServerId="0123456789abcdef0123456789abcdef")
         assert "entry-server-id-mismatch" in attention(replica, replica_admin, 3)
-        set_entry(replica, replica_admin, ServerId=source_entry["ServerId"])
+        set_entry(replica, replica_admin, ServerId=api(source, "GET", "/System/Info/Public")["Id"])
         assert attention(replica, replica_admin, 0) == []
 
     with subtest("R-PAIR-4: status reports an unreachable peer"):
@@ -491,21 +681,23 @@ in
         source.succeed("systemctl start nginx.service")
         assert attention(replica, replica_admin, 0) == []
 
-    with subtest("R-PAIR-2: status never reveals credentials"):
+    passwords = ["admin-pw", "changed-pw", "carol-2"] + list(PASSWORDS.values())
+    grep_passwords = " ".join(f"-e {shlex.quote(p)}" for p in passwords)
+
+    with subtest("R-PAIR-2: the commands never reveal credentials"):
         stored_keys = [s["ApiKey"] for m, t in [(source, source_admin), (replica, replica_admin)] for s in server_sync_config(m, t)["Servers"]]
         assert all(stored_keys), stored_keys
-        secrets = ["admin-pw", "changed-pw", SYNC_PASSWORD] + sync_tokens + stored_keys
-        for out in status_outputs:
-            for secret in secrets:
-                assert secret not in out, f"status printed a secret: {out}"
+        for out in outputs:
+            for secret in passwords + stored_keys:
+                assert secret not in out, f"sea-nettle printed a secret: {out}"
         for machine in [source, replica]:
             wrapper = machine.succeed("readlink -f $(command -v sea-nettle)").strip()
             assert f"--password-file {ADMIN_PASSWORD_FILE}" in machine.succeed(f"cat {wrapper}")
             machine.succeed(f"nix-store -qR {wrapper} >/tmp/closure")
-            machine.fail("xargs grep -rlF -e admin-pw -e changed-pw </tmp/closure")
+            machine.fail(f"xargs grep -rlF {grep_passwords} </tmp/closure")
 
-    with subtest("R-SERVER-6: administrator passwords never reach the journal"):
+    with subtest("R-SERVER-6, R-PAIR-2: passwords never reach the journal"):
         for machine in [source, replica]:
-            machine.fail("journalctl -b --no-pager | grep -F -e admin-pw -e changed-pw")
+            machine.fail(f"journalctl -b --no-pager | grep -F {grep_passwords}")
   '';
 }

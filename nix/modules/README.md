@@ -6,7 +6,7 @@ Import the modules from the flake's `nixosModules`:
 | --- | --- |
 | `jellyfin` | Sandboxed Jellyfin on localhost with its initial administrator, an optional read-only media directory, and an optional Tailscale Serve HTTPS endpoint |
 | `jellyfin-plugins` | Installs Nix-pinned plugin payloads before every start |
-| `server-sync` | Pinned [Server Sync](https://github.com/JPKribs/jellyfin-plugin-serversync) release |
+| `server-sync` | Pinned [Server Sync](https://github.com/JPKribs/jellyfin-plugin-serversync) release and the `sea-nettle` setup and status command |
 | `replica` | A replica: `jellyfin`, `server-sync`, the Peer Login plugin, and seeded link-cache settings |
 
 A source server typically imports `jellyfin` and `server-sync`; a replica
@@ -114,45 +114,118 @@ the dashboard.
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.
 
-## Dashboard setup
+## Setting up a pair
 
-### Source
+`sudo sea-nettle setup` sets up Server Sync between the source and the
+replica from `sea-nettle.jellyfin.setup`. Give both servers the same value,
+for example from a shared file:
 
-Open the source's HTTPS endpoint and sign in as the initial administrator.
-Create ordinary user accounts. Add the media libraries under
-the media directory. Disable saving artwork, NFO files, subtitles, and trickplay
-next to the media; Jellyfin cannot write there.
+```nix
+sea-nettle.jellyfin.setup = {
+  source = {
+    url = "https://source.example.ts.net:8445";
+    # The account the replica signs in to on the source.
+    syncAccount = {
+      name = "replica-sync";
+      passwordFile = "/run/secrets/replica-sync";
+      administrator = true;
+    };
+  };
+  replica = {
+    url = "https://replica.example.ts.net:8445";
+    # The account the source signs in to on the replica.
+    syncAccount = {
+      name = "source-sync";
+      passwordFile = "/run/secrets/source-sync";
+      administrator = false;
+    };
+  };
+  libraries.movies = {
+    name = "Movies";
+    type = "movies";
+    sourcePath = "/srv/media/movies";
+    # Or: content = "all";
+    content.whitelist = [ "Big Buck Bunny (2008)" ];
+  };
+  # Created on the source when missing; mapped on the replica.
+  users = {
+    alice = { };
+    bob.passwordFile = "/run/secrets/jellyfin-bob";
+  };
+  syncHistory = true;
+};
+```
 
-### Replica
+Both servers need both sync account password files: one server creates the
+account, the other signs in to it. A user's `passwordFile` is needed only on
+the source, to create a missing user.
 
-1. Open the replica's HTTPS endpoint and sign in as the initial administrator.
-   It is a local account; keep it separate from source accounts.
-2. Create a library at `${dataDir}/replica` (by default
-   `/var/lib/jellyfin/replica`).
-3. In Server Sync, add the source's HTTPS URL with **Direction = Pull**, sign
-   in, and map the source library to the replica library with
-   **Storage = Link**. Start by setting the mapping's **Library Filter** to
-   Whitelist with a few items. Non-video items in a Link mapping are copied, not linked.
-4. On the source, add the replica in Server Sync with **Direction = Push**,
-   allow linking, and grant only the peer permissions you need.
-5. On each server, allow the key user of the other server's entry under
-   **Server Sync > Settings > Whitelist** with no locations. Peer calls reach
-   Jellyfin through the local HTTPS proxy, so they all come from 127.0.0.1 and
-   a location cannot tell peers apart.
-6. Run `sudo sea-nettle status` on both servers (see "Checking a pair" below)
-   until neither reports anything, then enable content and history sync.
-7. Users sign in to the replica with their source credentials (see Peer Login
-   below). A new replica user starts with Jellyfin's default policy, which
-   includes access to all libraries. After a user's first sign-in, map that
-   user in Server Sync so their policy, history, and settings sync, or restrict
-   them in the dashboard.
+Each run sets up the server it runs on and reports what waits for the other.
+On a fresh pair, run it on the source, the replica, the source, and the
+replica again. The runs:
 
-The `replica` module seeds Server Sync with a 50 GiB link cache, 30-day
-retention, two episodes ahead, and a 5 MB/s download limit, only when Server
-Sync has no configuration yet. The cache limit does not reserve disk space.
-**Always Keep** creates permanent copies outside the cache budget; leave it
-empty unless you have budgeted the space. Uncached videos need the source; fully
-cached videos play during a source outage.
+- On the source: create the spec's missing users and libraries, the source's
+  sync account, its caller grant, and an entry for the replica (Push, links
+  allowed).
+- On the replica: create the libraries under `${dataDir}/replica/<key>`, the
+  replica's sync account, its caller grant, an entry for the source (Pull),
+  and a **Storage = Link** mapping for each library, from its `sourcePath`.
+  Mappings start disabled and are enabled, with content sync, once the link
+  check passes. A whitelist item is a top-level folder or file under
+  `sourcePath`.
+- With an administrator source account, each spec user is mapped once they
+  have signed in to the replica with their source password (see Peer Login
+  below), on the next run. Until then the report lists them under "Waiting",
+  which does not make the run exit 3. With `syncHistory`, history sync is
+  turned on with the first mapping.
+
+New libraries keep metadata, artwork, subtitles, lyrics, and trickplay in
+Jellyfin's state, not beside the media.
+
+**Sync accounts.** The source's sync account decides how links play:
+
+- Limited: content and links only. The source streams every replica user's
+  links as that account, so every replica user can play what it can see. Users
+  are not mapped, and setup refuses `syncHistory`.
+- Administrator: the source streams a link as the replica user's mapped
+  source user, with that user's library access and limits. A replica user who
+  is not in the spec's users, such as the replica's local administrator, cannot
+  play links. Watch history can sync. A compromised replica has administrator
+  access to the source.
+
+Setup never changes an existing account's administrator rights or library
+access; it reports a mismatch.
+
+**Reruns.** Run setup again at any time. It only adds what is missing and
+enables the spec's mappings; it never removes, disables, or rewrites existing
+users, passwords, libraries, entries, keys, mappings, or grants. A rerun after
+a dashboard change keeps the change. Where the dashboard contradicts the spec,
+such as an entry with another URL or a mapping to another library, the report
+names the conflict and how to resolve it. To stop syncing a library or user,
+remove it from the spec before disabling it, or the next run enables it again.
+Don't edit Server Sync in the dashboard while setup runs: its configuration is
+saved whole, so a save at the same moment can be lost.
+
+Exit statuses are the same as for `status`, below. An invalid spec exits 1
+before anything changes.
+
+### Dashboard settings
+
+Setup leaves these to the dashboard. Non-video items in a Link mapping are
+copied, not linked.
+
+- The link cache: the `replica` module seeds a 50 GiB cache, 30-day
+  retention, two episodes ahead, and a 5 MB/s download limit, only when Server
+  Sync has no configuration yet. The cache limit does not reserve disk space.
+  **Always Keep** creates permanent copies outside the cache budget; leave it
+  empty unless you have budgeted the space. Uncached videos need the source;
+  fully cached videos play during a source outage.
+- The source's link limits for the replica: streams at once, per-user limits,
+  and speeds.
+- User settings and metadata sync.
+
+A new replica user starts with Jellyfin's default policy, which includes access
+to all libraries. Restrict them in the dashboard if needed.
 
 Do not copy databases between servers. To recover a broken peer, run
 `sea-nettle status` on both servers and follow its fixes.
@@ -161,11 +234,11 @@ Do not copy databases between servers. To recover a broken peer, run
 
 `sudo sea-nettle status` checks this server's Server Sync setup and never
 changes configuration. Run it on each server; each run covers one direction.
-It signs in as the initial administrator with the password in
-`initialAdmin.passwordFile`, and signs out before it exits. If the password
-was changed in the dashboard, update the file to match: each refused run counts
-as a failed sign-in, and Jellyfin disables the account once it reaches the
-account's lockout limit, if one is set.
+`sea-nettle setup` ends with the same report. `status` signs in as the initial
+administrator with the password in `initialAdmin.passwordFile`, and signs out
+before it exits. If the password was changed in the dashboard, update the file
+to match: each refused run counts as a failed sign-in, and Jellyfin disables
+the account once it reaches the account's lockout limit, if one is set.
 
 It lists each peer with Server Sync's link check verdict, then what needs
 attention and how to fix it: unreachable or unpaired peers, peers that do not
