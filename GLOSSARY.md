@@ -53,8 +53,8 @@ A plugin that the NixOS modules hold at one exact version.
 _Avoid_: managed plugin
 
 **Claimed server**:
-A server whose startup wizard is complete, so that every caller must sign in.
-An unclaimed server lets anyone who reaches it configure it.
+A server whose startup wizard is complete. An unclaimed server lets anyone who
+reaches it configure it.
 _Avoid_: initialized server
 
 ### Users
@@ -102,7 +102,7 @@ _Avoid_: person, ordinary source user
 The password, kept as a hash, that signs a Peer Login user in only while the
 source is unreachable. It is the last password the source accepted through the
 replica, or the password the user had as a local user if the source has not
-accepted a sign-in of theirs since they were switched to Peer Login.
+accepted a replica sign-in of theirs since they were switched to Peer Login.
 _Avoid_: cached hash, stored hash
 
 **Unreachable**:
@@ -137,8 +137,8 @@ on the peer, or one of the peer's API keys.
 _Avoid_: stored key, peer key
 
 **Caller grant**:
-A server's permission for one caller, a user of that server or one of its API
-keys, to call its Server Sync as a peer.
+A server's permission for one of its users, or for its API keys together, to
+call its Server Sync as a peer.
 _Avoid_: caller access, peer grant, whitelist (Server Sync's dashboard name for
 the list of grants)
 
@@ -166,17 +166,17 @@ _Avoid_: cache (alone)
 
 **Library mapping**:
 A rule in a peer entry that ties one of the peer's libraries to one of this
-server's, and says what to sync from it and how to store it. In a pair, the
-replica's entry for the source holds them.
+server's, and says what to sync from it and how to store it. `sea-nettle setup`
+adds such rules to the replica's entry for the source.
 
 **User mapping**:
 A rule in a peer entry that says one of the peer's users and one of this
-server's users are the same person. In a pair, the replica's entry for the
-source holds them.
+server's users are the same person. `sea-nettle setup` adds such rules to the
+replica's entry for the source.
 
 **Link fallback user**:
 The source user that the source's entry for the replica names to stream links
-as, for a replica user that entry has no user mapping for.
+as, for a replica user that entry has no enabled user mapping for.
 
 **Content whitelist**:
 The top-level items of a library that the setup spec asks to sync, in place of
@@ -197,8 +197,8 @@ the replica.
 One invocation of `sea-nettle setup` or `sea-nettle status` on one server.
 
 **Report**:
-What a run prints when it completes: this server's peers, what the run
-changed, its findings, and its waiting items.
+The summary a run prints: this server's peers, what the run changed, its
+findings, and its waiting items.
 
 **Finding**:
 Something a report says needs attention, with how to fix it.

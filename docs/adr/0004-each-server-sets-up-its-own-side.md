@@ -5,9 +5,9 @@ server's initial administrator, and does only that server's part of the setup
 spec. One run that set up both servers would need both initial administrators'
 passwords. That would put the source administrator's password on the replica or
 on a workstation, and on the replica a compromise would then also expose the
-source's administrator. The peer credentials that `setup` needs and stores are
-those of the peer's sync account, whose rights the spec chooses: its password
-and the entry key.
+source's administrator. The peer credentials that `setup` handles are those of
+the peer's sync account, whose rights the spec chooses: it reads the password
+to sign in, and stores the entry key.
 
 ## Consequences
 

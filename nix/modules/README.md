@@ -71,7 +71,7 @@ requires its own sign-in.
 
 `sea-nettle.jellyfin.initialAdmin` is required. On a new server,
 `jellyfin-initial-admin` creates this administrator and completes Jellyfin's
-setup wizard as soon as Jellyfin starts. `jellyfin-serve` starts only after it
+startup wizard as soon as Jellyfin starts. `jellyfin-serve` starts only after it
 succeeds, because until then anyone who reaches Jellyfin can claim it. Local
 processes can still reach it in the few seconds between Jellyfin's start and
 the claim.
@@ -109,8 +109,9 @@ replaces the files in `${dataDir}/plugins/<name>` with the pinned payload, sets
 `autoUpdate` to false, and keeps a dashboard **Disable**. A dashboard uninstall
 is undone on the next start, and failed loads are retried. Another version
 installed from the dashboard catalog is deleted on the next start. To uninstall
-a plugin, remove it from `sea-nettle.jellyfin.plugins`, rebuild, and then
-uninstall it in the dashboard.
+a plugin, stop pinning it, which for Server Sync or Peer Login means no longer
+importing the module that pins it; then rebuild, and uninstall it in the
+dashboard.
 
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.
@@ -169,17 +170,17 @@ and the replica again. The runs:
   sync account, its caller grant, and an entry for the replica (Push, links
   allowed).
 - On the replica: create the libraries under `${dataDir}/replica/<key>`, the
-  replica's sync account, its caller grant, an entry for the source (Pull),
-  and a **Storage = Link** mapping for each library, from its `sourcePath`.
-  A mapping is enabled, with content sync, only when the link check passes and
-  the source has every whitelist item; until then it is added disabled, and a
-  later run enables it. A whitelist item is a top-level folder or file under
+  replica's sync account, its caller grant, an entry for the source (Pull), and
+  a **Storage = Link** mapping for each library, from its `sourcePath`. Setup
+  enables a mapping, with content sync, only when the link check passes and the
+  source has every whitelist item; until then it adds the mapping disabled, and
+  a later run enables it. A whitelist item is a top-level folder or file under
   `sourcePath`.
 - With an administrator as the source's sync account, each spec user is mapped
   once they have signed in to the replica with their source password (see Peer
-  Login below), on the next run. Until then the report lists them under
-  "Waiting", which does not make the run exit 3. With `syncHistory`, history
-  sync is turned on once a user mapping is enabled.
+  Login below), on the replica's next run. Until then the report lists them
+  under "Waiting", which does not make the run exit 3. With `syncHistory`,
+  history sync is turned on once a user mapping is enabled.
 
 New libraries keep metadata, artwork, subtitles, lyrics, and trickplay in
 Jellyfin's state, not beside the media.
@@ -190,8 +191,8 @@ Jellyfin's state, not beside the media.
   user's links as that sync account, so every replica user can play what it can
   see. Users are not mapped, and setup refuses `syncHistory`.
 - Administrator: the source streams a link as the replica user's mapped
-  source user, with that user's library access and limits. A replica user who
-  is not in the spec's users, such as the replica's initial administrator,
+  source user, with that user's library access and limits. A replica user
+  without an enabled user mapping, such as the replica's initial administrator,
   cannot play links. Watch history can sync. A compromised replica has
   administrator access to the source.
 
@@ -241,8 +242,9 @@ changes configuration. Run it on each server; each run covers one direction.
 `sea-nettle setup` ends with the same report. `status` signs in as the initial
 administrator with the password in `initialAdmin.passwordFile`, and signs out
 before it exits. If the password was changed in the dashboard, update the file
-to match: each refused run counts as a failed sign-in, and Jellyfin disables
-the administrator once it reaches their lockout limit, if one is set.
+to match: each run refused for a wrong password counts as a failed sign-in, and
+Jellyfin disables the administrator once it reaches their lockout limit, if one
+is set.
 
 It lists each peer with Server Sync's link check verdict, then what needs
 attention and how to fix it: unreachable or unpaired peers, peers that do not
@@ -288,8 +290,8 @@ loopback addresses; otherwise every Peer Login sign-in is refused.
 - **Existing replica users:** keep their current authentication provider. To
   switch one to source credentials, set **Authentication Provider** to Peer
   Login in the user's dashboard profile. Their current password stays valid
-  during outages until the source accepts a sign-in of theirs with another
-  password.
+  during outages until the source accepts a replica sign-in of theirs with
+  another password.
 - **Revoking access:** disabling or deleting a user on the source refuses their
   later sign-ins that reach the source. Their replica sessions and cached
   password stay valid, so disable or delete the replica user as well.
