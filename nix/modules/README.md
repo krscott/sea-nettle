@@ -81,24 +81,24 @@ agenix secret; it can be readable by root only. Trailing newlines in it are
 ignored, and Jellyfin refuses an empty password. The password never reaches
 the Nix store, command lines, or the journal.
 
-Setup runs once. When the wizard is complete, the unit does nothing, so later
-changes to `name` or the password file do not change the administrator; manage
-it in the dashboard. Keep `name` and the file in step with the dashboard,
-because `sea-nettle` signs in with them, and keep the file in place: the unit
-loads it on every boot. Without it, the journal shows
+The unit creates the administrator once. When the wizard is complete, it does
+nothing, so later changes to `name` or the password file do not change the
+administrator; manage it in the dashboard. Keep `name` and the file in step
+with the dashboard, because `sea-nettle` signs in with them, and keep the file
+in place: the unit loads it on every boot. Without it, the journal shows
 `jellyfin-initial-admin.service: Failed to set up credentials: No such file or directory`,
 and `jellyfin-serve` stays down. Restore the file, then run
 `systemctl start jellyfin-serve`, or `systemctl start jellyfin-initial-admin`
 without `servePort`. Use the same command if the unit reports that Jellyfin
 did not finish starting within 5 minutes.
 
-If the unit reports that Jellyfin's first user already has a password, setup
-was interrupted or someone else claimed the server first. If
-`journalctl -u jellyfin-initial-admin` shows that an earlier run logged
-`Set the password for <name>`, that run set it: restart `jellyfin.service`,
-which then completes the wizard, and start the units again. Otherwise, even if
-an earlier run could not reach Jellyfin, treat the server as claimed by
-someone else: stop Jellyfin, delete its data directory
+If the unit reports that Jellyfin's first user already has a password, an
+earlier start of the unit was interrupted or someone else set that password
+first. If `journalctl -u jellyfin-initial-admin` shows that an earlier start
+logged `Set the password for <name>`, that start set it: restart
+`jellyfin.service`, which then completes the wizard, and start the units again.
+Otherwise, even if an earlier start could not reach Jellyfin, treat the server
+as taken over by someone else: stop Jellyfin, delete its data directory
 (`/var/lib/jellyfin` by default), run `systemd-tmpfiles --create` to recreate
 it with the seeded configuration, and start the units again.
 
@@ -109,8 +109,8 @@ replaces the files in `${dataDir}/plugins/<name>` with the pinned payload, sets
 `autoUpdate` to false, and keeps a dashboard **Disable**. A dashboard uninstall
 is undone on the next start, and failed loads are retried. Another version
 installed from the dashboard catalog is deleted on the next start. To uninstall
-a plugin, remove it from the configuration, rebuild, and then uninstall it in
-the dashboard.
+a plugin, remove it from `sea-nettle.jellyfin.plugins`, rebuild, and then
+uninstall it in the dashboard.
 
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.
@@ -171,8 +171,9 @@ and the replica again. The runs:
 - On the replica: create the libraries under `${dataDir}/replica/<key>`, the
   replica's sync account, its caller grant, an entry for the source (Pull),
   and a **Storage = Link** mapping for each library, from its `sourcePath`.
-  Mappings start disabled and are enabled, with content sync, once the link
-  check passes. A whitelist item is a top-level folder or file under
+  A mapping is enabled, with content sync, only when the link check passes and
+  the source has every whitelist item; until then it is added disabled, and a
+  later run enables it. A whitelist item is a top-level folder or file under
   `sourcePath`.
 - With an administrator as the source's sync account, each spec user is mapped
   once they have signed in to the replica with their source password (see Peer
@@ -287,7 +288,8 @@ loopback addresses; otherwise every Peer Login sign-in is refused.
 - **Existing replica users:** keep their current authentication provider. To
   switch one to source credentials, set **Authentication Provider** to Peer
   Login in the user's dashboard profile. Their current password stays valid
-  during outages until their next sign-in that reaches the source.
+  during outages until the source accepts a sign-in of theirs with another
+  password.
 - **Revoking access:** disabling or deleting a user on the source refuses their
   later sign-ins that reach the source. Their replica sessions and cached
   password stay valid, so disable or delete the replica user as well.

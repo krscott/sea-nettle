@@ -13,7 +13,6 @@ save.
 
 - Removing a library or a user from the spec removes nothing from either
   server.
-- A rerun turns a spec mapping and its sync features back on, and adds a spec
-  whitelist item back, after the operator turned it off or removed it in the
-  dashboard. To stop syncing something, the operator removes it from the spec
-  first.
+- A rerun restores what the spec asks for after the operator turned it off or
+  removed it in the dashboard: a mapping, its sync features, or a whitelist
+  item. To stop syncing something, the operator removes it from the spec first.

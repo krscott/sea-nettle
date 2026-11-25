@@ -53,8 +53,8 @@ A plugin that the NixOS modules hold at one exact version.
 _Avoid_: managed plugin
 
 **Claimed server**:
-A server that has an administrator with a password. An unclaimed server lets
-anyone who reaches it become its administrator.
+A server whose startup wizard is complete, so that every caller must sign in.
+An unclaimed server lets anyone who reaches it configure it.
 _Avoid_: initialized server
 
 ### Users
@@ -87,7 +87,7 @@ _Avoid_: source-backed user
 
 **Local user**:
 A replica user whose authentication provider is not Peer Login.
-_Avoid_: local account, local (for "on this server")
+_Avoid_: local account, local (for a user, library or folder on this server)
 
 **Sync account**:
 A dedicated user on one server that the peer's entry signs in as. No person
@@ -95,23 +95,21 @@ signs in with it.
 _Avoid_: service account, source account (for the source's sync account)
 
 **Spec user**:
-A source user that the setup spec names.
+A source user that the setup spec lists under its users.
 _Avoid_: person, ordinary source user
 
 **Cached password**:
-The password, kept as a hash, that the replica checks a Peer Login user's
-sign-in against only while the source is unreachable. It is the last password
-the source accepted through the replica, or the password the user had as a
-local user if they have not signed in through the source since they were
-switched to Peer Login.
+The password, kept as a hash, that signs a Peer Login user in only while the
+source is unreachable. It is the last password the source accepted through the
+replica, or the password the user had as a local user if the source has not
+accepted a sign-in of theirs since they were switched to Peer Login.
 _Avoid_: cached hash, stored hash
 
 **Unreachable**:
-Said of a server that does not answer. At a sign-in, the source is unreachable
-when the connection fails, it does not answer in time, or it answers with a
-server error; a refusal or any other answer is not unreachable. A peer is
-unreachable when the link check, or `setup`'s own call to it, says so, which can
-include a peer that refuses the entry key.
+Said of a server that its caller treats as not answering. At a sign-in that is
+a failed connection, a timeout, or a server error, and never a refusal; for a
+peer it is what the link check or `setup`'s own call reports, which can include
+a refused entry key.
 _Avoid_: unavailable, down, offline
 
 ### Server Sync
@@ -139,7 +137,8 @@ on the peer, or one of the peer's API keys.
 _Avoid_: stored key, peer key
 
 **Caller grant**:
-A server's permission for one of its users to call its Server Sync as a peer.
+A server's permission for one caller, a user of that server or one of its API
+keys, to call its Server Sync as a peer.
 _Avoid_: caller access, peer grant, whitelist (Server Sync's dashboard name for
 the list of grants)
 
@@ -166,19 +165,18 @@ operator sets.
 _Avoid_: cache (alone)
 
 **Library mapping**:
-A rule in the replica's entry for the source that ties one source library to one
-replica library, and says what to sync from it and how to store it.
+A rule in a peer entry that ties one of the peer's libraries to one of this
+server's, and says what to sync from it and how to store it. In a pair, the
+replica's entry for the source holds them.
 
 **User mapping**:
-A rule in the replica's entry for the source that ties one source user to one
-replica user. Their watch history can then sync, and a source whose sync
-account is an administrator streams the replica user's links as that source
-user.
+A rule in a peer entry that says one of the peer's users and one of this
+server's users are the same person. In a pair, the replica's entry for the
+source holds them.
 
 **Link fallback user**:
-The source user, named in the source's entry for the replica, as whom the
-source streams links for a replica user it cannot tie to a source user of their
-own.
+The source user that the source's entry for the replica names to stream links
+as, for a replica user that entry has no user mapping for.
 
 **Content whitelist**:
 The top-level items of a library that the setup spec asks to sync, in place of
@@ -199,8 +197,8 @@ the replica.
 One invocation of `sea-nettle setup` or `sea-nettle status` on one server.
 
 **Report**:
-The result of a run: this server's peers, what the run changed, its findings,
-and its waiting items.
+What a run prints when it completes: this server's peers, what the run
+changed, its findings, and its waiting items.
 
 **Finding**:
 Something a report says needs attention, with how to fix it.

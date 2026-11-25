@@ -28,5 +28,5 @@ replica exists to keep serving its users then. The source needs no changes.
   own lockout.
 - Peer Login never copies administrator rights (R-LOGIN-6). A new replica user
   gets Jellyfin's default policy, which includes access to all libraries.
-- Peer Login creates no user mapping. Mapping a new Peer Login user is left to
-  a later `sea-nettle setup` run.
+- Peer Login creates no user mapping. A later `sea-nettle setup` run adds one
+  for a spec user, when the source's sync account is an administrator.

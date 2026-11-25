@@ -87,13 +87,13 @@ in
       name = lib.mkOption {
         type = lib.types.nonEmptyStr;
         example = "admin";
-        description = "Name of the administrator that a new server is created with. Changes after the first setup have no effect.";
+        description = "Name of the administrator that a new server is created with. Changes after the first setup do not rename the administrator; `sea-nettle` signs in with this name, so keep it in step with the dashboard.";
       };
 
       passwordFile = lib.mkOption {
         type = lib.types.externalPath;
         example = "/run/secrets/jellyfin-admin";
-        description = "Runtime file, outside the Nix store, that holds the initial administrator's password. It must exist on every boot; changes after the first setup have no effect.";
+        description = "Runtime file, outside the Nix store, that holds the initial administrator's password. It must exist on every boot. Changes after the first setup do not change the password; `sea-nettle` signs in with this file, so keep it in step with the dashboard.";
       };
     };
 

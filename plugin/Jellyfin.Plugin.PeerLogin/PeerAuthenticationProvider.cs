@@ -151,7 +151,8 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     private async Task<ProviderAuthenticationResult> CreateUserAsync(IUserManager userManager, string username, string password)
     {
         // R-LOGIN-1. Jellyfin saves new users with the default provider and no password, which signs in
-        // with an empty password. Hash first to keep that window short, and never leave such a user behind.
+        // with an empty password. Hash first to keep that window short, and delete such a user if the
+        // second save fails. A crash between the two saves, or a failed delete, still leaves one.
         var hash = _crypto.CreatePasswordHash(password).ToString();
         var user = await userManager.CreateUserAsync(username).ConfigureAwait(false);
         try

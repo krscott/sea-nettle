@@ -29,8 +29,8 @@
 
 - `just check` runs the fast checks that PR CI runs. `just verify` adds the
   heavy VM test; run it before merging changes to the modules, the plugin's
-  Jellyfin integration, or the Jellyfin version. Jellyfin's authentication
-  provider interface is unstable.
+  Jellyfin integration, or the Jellyfin version. A Jellyfin upgrade needs it
+  most: the authentication provider interface is unstable.
 - PR CI must stay under 5 minutes of wall-clock time, so that agents waiting
   on it keep their prompt cache. Keep heavy tests out of the flake's `checks`
   output; add them under `legacyPackages.<system>.heavyChecks`. If cold builds
