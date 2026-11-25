@@ -109,9 +109,9 @@ replaces the files in `${dataDir}/plugins/<name>` with the pinned payload, sets
 `autoUpdate` to false, and keeps a dashboard **Disable**. A dashboard uninstall
 is undone on the next start, and failed loads are retried. Another version
 installed from the dashboard catalog is deleted on the next start. To uninstall
-a plugin, stop pinning it, which for Server Sync or Peer Login means no longer
-importing the module that pins it; then rebuild, and uninstall it in the
-dashboard.
+a plugin, first make sure `sea-nettle.jellyfin.plugins` no longer holds it; the
+`server-sync` and `replica` modules add their plugins to that set. Then
+rebuild, and uninstall it in the dashboard.
 
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.
@@ -172,10 +172,10 @@ and the replica again. The runs:
 - On the replica: create the libraries under `${dataDir}/replica/<key>`, the
   replica's sync account, its caller grant, an entry for the source (Pull), and
   a **Storage = Link** mapping for each library, from its `sourcePath`. Setup
-  enables a mapping, with content sync, only when the link check passes and the
-  source has every whitelist item; until then it adds the mapping disabled, and
-  a later run enables it. A whitelist item is a top-level folder or file under
-  `sourcePath`.
+  enables a mapping only when the link check passes and the source has every
+  whitelist item; until then it adds the mapping disabled, and a later run
+  enables it. It turns on content sync once a mapping is enabled. A whitelist
+  item is a top-level folder or file under `sourcePath`.
 - With an administrator as the source's sync account, each spec user is mapped
   once they have signed in to the replica with their source password (see Peer
   Login below), on the replica's next run. Until then the report lists them
@@ -191,10 +191,11 @@ Jellyfin's state, not beside the media.
   user's links as that sync account, so every replica user can play what it can
   see. Users are not mapped, and setup refuses `syncHistory`.
 - Administrator: the source streams a link as the replica user's mapped
-  source user, with that user's library access and limits. A replica user
-  without an enabled user mapping, such as the replica's initial administrator,
-  cannot play links. Watch history can sync. A compromised replica has
-  administrator access to the source.
+  source user, with that user's library access and limits. The source streams
+  no links for a replica user without an enabled user mapping, such as the
+  replica's initial administrator, unless a link fallback user is set in the
+  dashboard. Watch history can sync. A compromised replica has administrator
+  access to the source.
 
 Setup never changes an existing user's administrator rights or library
 access. It reports a sync account whose administrator rights differ from the
