@@ -77,7 +77,8 @@ def grant(*, user_id: str, user_name: str) -> Edit:
     """Lets a peer's sync account call this server's Server Sync from any address.
 
     Peer calls reach Jellyfin through the local HTTPS proxy, so they all come from
-    127.0.0.1, and a location cannot tell peers apart.
+    127.0.0.1, and a location cannot tell peers apart. Jellyfin reads forwarded addresses
+    only from known proxies, and the seeded network configuration names none.
     """
 
     def edit(config: JsonObject) -> list[Item]:

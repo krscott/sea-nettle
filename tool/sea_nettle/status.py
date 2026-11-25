@@ -1,9 +1,10 @@
 """`sea-nettle status`: reads this server's Server Sync setup and runs its link checks.
 
 Apart from its own session, every call reads, except Server Sync's link check, which can
-renew pairing secrets but never changes configuration (R-PAIR-1). Signing in updates the
-administrator's last sign-in date and failed-attempt count, as any sign-in does; these are
-not configuration either.
+renew pairing secrets but never changes configuration (R-PAIR-1). The command's own sign-in
+changes what Jellyfin records about the administrator's sign-ins, as any sign-in does: a
+successful one sets the last sign-in date and resets the failed-attempt count, and a refused
+one raises that count. These are not configuration either.
 """
 
 from __future__ import annotations

@@ -39,7 +39,7 @@ internal sealed partial class SourceClient
         "MediaBrowser Client=\"Jellyfin Peer Login\", Device=\"Jellyfin Peer Login\", DeviceId=\"jellyfin-peer-login\", Version=\"1\"";
 
     // Jellyfin holds a lock while it calls the provider, and every unknown username shares one
-    // lock, so this bounds how long a source that hangs delays each first sign-in.
+    // lock, so this limits how long one request to a source that hangs holds up first sign-ins.
     private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
 
     // Jellyfin's request DTOs use PascalCase names.

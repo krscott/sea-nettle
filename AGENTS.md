@@ -8,7 +8,9 @@
   commands, messages and docs: use its terms, and do not use a word listed
   under _Avoid_ for that term's concept. When a concept has no term, or a term
   no longer fits, change the glossary in the same PR. Keep implementation
-  detail out of it.
+  detail out of it. Names fixed by an outside contract keep their spelling:
+  the `--json` report's keys and finding codes, Server Sync's field names, and
+  dashboard paths.
   Existing code, messages and requirement wording still use some avoided
   words; issue #11 renames them. Use the glossary's terms in new work.
   TODO: remove these two sentences once #11 is closed.
@@ -27,7 +29,8 @@
 
 - `just check` runs the fast checks that PR CI runs. `just verify` adds the
   heavy VM test; run it before merging changes to the modules, the plugin's
-  Jellyfin integration, or the Jellyfin version.
+  Jellyfin integration, or the Jellyfin version. Jellyfin's authentication
+  provider interface is unstable.
 - PR CI must stay under 5 minutes of wall-clock time, so that agents waiting
   on it keep their prompt cache. Keep heavy tests out of the flake's `checks`
   output; add them under `legacyPackages.<system>.heavyChecks`. If cold builds

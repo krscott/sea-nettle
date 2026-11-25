@@ -82,9 +82,10 @@ ignored, and Jellyfin refuses an empty password. The password never reaches
 the Nix store, command lines, or the journal.
 
 Setup runs once. When the wizard is complete, the unit does nothing, so later
-changes to `name` or the password file have no effect; manage the administrator
-in the dashboard. Keep the file in place anyway: the unit loads it on every
-boot. Without it, the journal shows
+changes to `name` or the password file do not change the administrator; manage
+it in the dashboard. Keep `name` and the file in step with the dashboard,
+because `sea-nettle` signs in with them, and keep the file in place: the unit
+loads it on every boot. Without it, the journal shows
 `jellyfin-initial-admin.service: Failed to set up credentials: No such file or directory`,
 and `jellyfin-serve` stays down. Restore the file, then run
 `systemctl start jellyfin-serve`, or `systemctl start jellyfin-initial-admin`
@@ -160,9 +161,9 @@ Both servers need both sync account password files: one server creates the
 account, the other signs in to it. A user's `passwordFile` is needed only on
 the source, to create a missing user.
 
-Each run sets up the server it runs on and reports what waits for the other.
-On a fresh pair, run it on the source, the replica, the source, and the
-replica again. The runs:
+Each run sets up the server it runs on and reports what needs a run on the
+other first. On a fresh pair, run it on the source, the replica, the source,
+and the replica again. The runs:
 
 - On the source: create the spec's missing users and libraries, the source's
   sync account, its caller grant, and an entry for the replica (Push, links
@@ -177,7 +178,7 @@ replica again. The runs:
   once they have signed in to the replica with their source password (see Peer
   Login below), on the next run. Until then the report lists them under
   "Waiting", which does not make the run exit 3. With `syncHistory`, history
-  sync is turned on with the first mapping.
+  sync is turned on once a user mapping is enabled.
 
 New libraries keep metadata, artwork, subtitles, lyrics, and trickplay in
 Jellyfin's state, not beside the media.
@@ -194,17 +195,19 @@ Jellyfin's state, not beside the media.
   administrator access to the source.
 
 Setup never changes an existing user's administrator rights or library
-access; it reports a mismatch.
+access. It reports a sync account whose administrator rights differ from the
+spec, and a standard one that sees every library or misses one of the spec's.
 
 **Reruns.** Run setup again at any time. It only adds what is missing and
 enables the spec's mappings; it never removes, disables, or rewrites existing
 users, passwords, libraries, entries, entry keys, mappings, or grants. A rerun
 after a dashboard change keeps the change. Where the dashboard contradicts the
 spec, such as an entry with another URL or a mapping to another library, the
-report names the conflict and how to resolve it. To stop syncing a library or
-user, remove it from the spec before disabling it, or the next run enables it
-again. Don't edit Server Sync in the dashboard while setup runs: its
-configuration is saved whole, so a save at the same moment can be lost.
+report names the conflict and how to resolve it. To stop syncing a library,
+user, or whitelist item, remove it from the spec before disabling or removing
+it, or the next run turns it on or adds it again. Don't edit Server Sync in
+the dashboard while setup runs: its configuration is saved whole, so a save at
+the same moment can be lost.
 
 Exit statuses are the same as for `status`, below. An invalid spec exits 1
 before anything changes.
@@ -278,7 +281,7 @@ loopback addresses; otherwise every Peer Login sign-in is refused.
 - **Password changes:** the replica refuses them, including an administrator's
   reset and the forgot-password PIN. Clients show a generic error; the reason
   is in the replica's log. Change the password on the source; the next replica
-  sign-in that reaches the source updates the cached password.
+  sign-in that the source accepts updates the cached password.
 - **Administrator rights:** never granted or changed by the plugin. Grant them
   on the replica if a user needs them.
 - **Existing replica users:** keep their current authentication provider. To
