@@ -191,11 +191,10 @@ Jellyfin's state, not beside the media.
   user's links as that sync account, so every replica user can play what it can
   see. Users are not mapped, and setup refuses `syncHistory`.
 - Administrator: the source streams a link as the replica user's mapped
-  source user, with that user's library access and limits. The source streams
-  no links for a replica user without an enabled user mapping, such as the
-  replica's initial administrator, unless a link fallback user is set in the
-  dashboard. Watch history can sync. A compromised replica has administrator
-  access to the source.
+  source user, with that user's library access and limits. As setup configures
+  the pair, the source streams no links for a replica user without an enabled
+  user mapping, such as the replica's initial administrator. Watch history can
+  sync. A compromised replica has administrator access to the source.
 
 Setup never changes an existing user's administrator rights or library
 access. It reports a sync account whose administrator rights differ from the
