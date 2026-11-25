@@ -161,7 +161,9 @@ class Entry:
 
     def peer_request(self) -> dict[str, object]:
         """A request that makes Server Sync call the peer with the key it stores for this
-        entry, and only at its saved URL, so the command never handles the key (R-PAIR-2)."""
+        entry, and only at its saved URL, so the command never handles the key (R-PAIR-2).
+        A link check needs `ServerKey` to pair: Server Sync opens the pairing window only for
+        a saved entry at its saved URL."""
         return {
             "ServerUrl": self.url,
             "ApiKey": KEPT_API_KEY,

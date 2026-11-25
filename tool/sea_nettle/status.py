@@ -1,7 +1,9 @@
 """`sea-nettle status`: reads this server's Server Sync setup and runs its link checks.
 
 Apart from its own session, every call reads, except Server Sync's link check, which can
-renew pairing secrets but never changes configuration (R-PAIR-1).
+renew pairing secrets but never changes configuration (R-PAIR-1). Signing in updates the
+administrator's last sign-in date and failed-attempt count, as any sign-in does; these are
+not configuration either.
 """
 
 from __future__ import annotations

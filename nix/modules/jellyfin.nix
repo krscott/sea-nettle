@@ -221,7 +221,8 @@ in
     systemd.services.jellyfin-serve = lib.mkIf (cfg.servePort != null) {
       description = "Jellyfin tailnet HTTPS endpoint";
       wantedBy = [ "multi-user.target" ];
-      # Never publish an unclaimed server (R-SERVER-6).
+      # Never publish an unclaimed server (R-SERVER-6). Through `requires`, a Jellyfin restart
+      # runs the initial-administrator check again before the endpoint returns.
       after = [
         "tailscaled.service"
         "jellyfin.service"
@@ -239,6 +240,7 @@ in
         ExecStop = serve "stop";
         Restart = "on-failure";
         RestartSec = 5;
+        # Exit status 3 is a port that another handler or Funnel uses, which no retry fixes.
         RestartPreventExitStatus = [ 3 ];
       };
     };

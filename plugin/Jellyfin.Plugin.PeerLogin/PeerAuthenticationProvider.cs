@@ -112,7 +112,8 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     /// <inheritdoc />
     public Task ChangePassword(User user, string newPassword)
     {
-        // R-LOGIN-5
+        // R-LOGIN-5. This is Jellyfin's own SecurityException, which its API answers with 403;
+        // System.Security.SecurityException would become a 500.
         throw new SecurityException("Change this password on the source server.");
     }
 
@@ -131,13 +132,15 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
 
         if (!IsSourceBacked(user))
         {
-            // R-LOGIN-9
+            // The source's canonical name can belong to another provider's user even when the
+            // typed name resolved none (R-LOGIN-9).
             throw new AuthenticationException("The account does not use Peer Login.");
         }
 
         if (!MatchesCachedPassword(user, password))
         {
-            // R-LOGIN-3
+            // R-LOGIN-3. This is the default provider's hash format, so an administrator can
+            // switch the user back to that provider and keep the password.
             user.Password = _crypto.CreatePasswordHash(password).ToString();
             await userManager.UpdateUserAsync(user).ConfigureAwait(false);
         }

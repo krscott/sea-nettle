@@ -513,6 +513,8 @@ def run_setup(run: Run) -> None:
     run.ensure_libraries()
     account = run.ensure_grant()
     if account is None:
+        # Stop before the peer's part: never add an entry while this server's sync account
+        # has no caller grant.
         return
     server_id = run.peer_id()
     if server_id is None:
