@@ -84,6 +84,7 @@ fi
 expect 204
 echo "Set the password for $name; completing the startup wizard."
 
+# The wizard's remote-access step is skipped: it would rewrite network.xml.
 request POST /Startup/Complete
 expect 204
 echo "Created the Jellyfin administrator $name and completed the startup wizard."

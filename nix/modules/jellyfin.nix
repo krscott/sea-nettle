@@ -87,13 +87,13 @@ in
       name = lib.mkOption {
         type = lib.types.nonEmptyStr;
         example = "admin";
-        description = "Name of the administrator that a new server is created with. Changes after the first setup have no effect.";
+        description = "Name of the administrator that a new server is created with. Changes after the server is claimed do not rename the administrator; `sea-nettle` signs in with this name, so keep it in step with the dashboard.";
       };
 
       passwordFile = lib.mkOption {
         type = lib.types.externalPath;
         example = "/run/secrets/jellyfin-admin";
-        description = "Runtime file, outside the Nix store, that holds the initial administrator's password. It must exist on every boot; changes after the first setup have no effect.";
+        description = "Runtime file, outside the Nix store, that holds the initial administrator's password. It must exist on every boot. Changes after the server is claimed do not change the password; `sea-nettle` signs in with this file, so keep it in step with the dashboard.";
       };
     };
 
@@ -221,7 +221,8 @@ in
     systemd.services.jellyfin-serve = lib.mkIf (cfg.servePort != null) {
       description = "Jellyfin tailnet HTTPS endpoint";
       wantedBy = [ "multi-user.target" ];
-      # Never publish an unclaimed server (R-SERVER-6).
+      # Never publish an unclaimed server (R-SERVER-6). Through `requires`, a Jellyfin restart
+      # runs the initial-administrator check again before the endpoint returns.
       after = [
         "tailscaled.service"
         "jellyfin.service"
@@ -239,6 +240,7 @@ in
         ExecStop = serve "stop";
         Restart = "on-failure";
         RestartSec = 5;
+        # Exit status 3 is a port that another handler or Funnel uses, which no retry fixes.
         RestartPreventExitStatus = [ 3 ];
       };
     };

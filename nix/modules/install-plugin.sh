@@ -26,7 +26,8 @@ for file in "$payload"/*; do
     fi
 done
 
-# Pin the version (R-SERVER-3) and keep a dashboard Disable (R-SERVER-5).
+# Pin the version (R-SERVER-3) and keep a dashboard Disable (R-SERVER-5). Any other status is
+# reset, so Jellyfin retries a plugin that failed to load.
 previous=$plugin_dir/meta.json
 if [[ ! -f $previous ]]; then
     previous=$payload/meta.json

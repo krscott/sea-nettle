@@ -12,8 +12,8 @@ The flake provides:
 - `nixosModules.jellyfin`, `jellyfin-plugins`, `server-sync`, and `replica`.
   See [the module docs](nix/modules/README.md) for setup.
 
-`REQUIREMENTS.md` lists the guarantees, and `DESIGN.md` explains how the
-project meets them.
+`REQUIREMENTS.md` lists the guarantees, `GLOSSARY.md` defines the project's
+terms, and `docs/adr/` records the decisions behind its design.
 
 ## Development
 

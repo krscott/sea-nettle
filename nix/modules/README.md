@@ -71,7 +71,7 @@ requires its own sign-in.
 
 `sea-nettle.jellyfin.initialAdmin` is required. On a new server,
 `jellyfin-initial-admin` creates this administrator and completes Jellyfin's
-setup wizard as soon as Jellyfin starts. `jellyfin-serve` starts only after it
+startup wizard as soon as Jellyfin starts. `jellyfin-serve` starts only after it
 succeeds, because until then anyone who reaches Jellyfin can claim it. Local
 processes can still reach it in the few seconds between Jellyfin's start and
 the claim.
@@ -81,23 +81,24 @@ agenix secret; it can be readable by root only. Trailing newlines in it are
 ignored, and Jellyfin refuses an empty password. The password never reaches
 the Nix store, command lines, or the journal.
 
-Setup runs once. When the wizard is complete, the unit does nothing, so later
-changes to `name` or the password file have no effect; manage the account in
-the dashboard. Keep the file in place anyway: the unit loads it on every boot.
-Without it, the journal shows
+The unit creates the administrator once. When the wizard is complete, it does
+nothing, so later changes to `name` or the password file do not change the
+administrator; manage it in the dashboard. Keep `name` and the file in step
+with the dashboard, because `sea-nettle` signs in with them, and keep the file
+in place: the unit loads it on every boot. Without it, the journal shows
 `jellyfin-initial-admin.service: Failed to set up credentials: No such file or directory`,
 and `jellyfin-serve` stays down. Restore the file, then run
 `systemctl start jellyfin-serve`, or `systemctl start jellyfin-initial-admin`
 without `servePort`. Use the same command if the unit reports that Jellyfin
 did not finish starting within 5 minutes.
 
-If the unit reports that Jellyfin's first user already has a password, setup
-was interrupted or someone else claimed the server first. If
-`journalctl -u jellyfin-initial-admin` shows that an earlier run logged
-`Set the password for <name>`, that run set it: restart `jellyfin.service`,
-which then completes the wizard, and start the units again. Otherwise, even if
-an earlier run could not reach Jellyfin, treat the server as claimed by
-someone else: stop Jellyfin, delete its data directory
+If the unit reports that Jellyfin's first user already has a password, an
+earlier start of the unit was interrupted or someone else set that password
+first. If `journalctl -u jellyfin-initial-admin` shows that an earlier start
+logged `Set the password for <name>`, that start set it: restart
+`jellyfin.service`, which then completes the wizard, and start the units again.
+Otherwise, even if an earlier start could not reach Jellyfin, treat the server
+as taken over by someone else: stop Jellyfin, delete its data directory
 (`/var/lib/jellyfin` by default), run `systemd-tmpfiles --create` to recreate
 it with the seeded configuration, and start the units again.
 
@@ -108,8 +109,9 @@ replaces the files in `${dataDir}/plugins/<name>` with the pinned payload, sets
 `autoUpdate` to false, and keeps a dashboard **Disable**. A dashboard uninstall
 is undone on the next start, and failed loads are retried. Another version
 installed from the dashboard catalog is deleted on the next start. To uninstall
-a plugin, remove it from the configuration, rebuild, and then uninstall it in
-the dashboard.
+a plugin, first make sure `sea-nettle.jellyfin.plugins` no longer holds it; the
+`server-sync` and `replica` modules add their plugins to that set. Then
+rebuild, and uninstall it in the dashboard.
 
 Before changing plugin versions, take a Jellyfin backup and check the release's
 Jellyfin compatibility. The modules assert the supported Jellyfin version.
@@ -124,7 +126,7 @@ for example from a shared file:
 sea-nettle.jellyfin.setup = {
   source = {
     url = "https://source.example.ts.net:8445";
-    # The account the replica signs in to on the source.
+    # The sync account the replica signs in to on the source.
     syncAccount = {
       name = "replica-sync";
       passwordFile = "/run/secrets/replica-sync";
@@ -133,7 +135,7 @@ sea-nettle.jellyfin.setup = {
   };
   replica = {
     url = "https://replica.example.ts.net:8445";
-    # The account the source signs in to on the replica.
+    # The sync account the source signs in to on the replica.
     syncAccount = {
       name = "source-sync";
       passwordFile = "/run/secrets/source-sync";
@@ -160,51 +162,54 @@ Both servers need both sync account password files: one server creates the
 account, the other signs in to it. A user's `passwordFile` is needed only on
 the source, to create a missing user.
 
-Each run sets up the server it runs on and reports what waits for the other.
-On a fresh pair, run it on the source, the replica, the source, and the
-replica again. The runs:
+Each run sets up the server it runs on and reports what needs a run on the
+other first. On a fresh pair, run it on the source, the replica, the source,
+and the replica again. The runs:
 
 - On the source: create the spec's missing users and libraries, the source's
   sync account, its caller grant, and an entry for the replica (Push, links
   allowed).
 - On the replica: create the libraries under `${dataDir}/replica/<key>`, the
-  replica's sync account, its caller grant, an entry for the source (Pull),
-  and a **Storage = Link** mapping for each library, from its `sourcePath`.
-  Mappings start disabled and are enabled, with content sync, once the link
-  check passes. A whitelist item is a top-level folder or file under
-  `sourcePath`.
-- With an administrator source account, each spec user is mapped once they
-  have signed in to the replica with their source password (see Peer Login
-  below), on the next run. Until then the report lists them under "Waiting",
-  which does not make the run exit 3. With `syncHistory`, history sync is
-  turned on with the first mapping.
+  replica's sync account, its caller grant, an entry for the source (Pull), and
+  a **Storage = Link** mapping for each library, from its `sourcePath`. Setup
+  enables a mapping only when the link check passes and the source has every
+  whitelist item; until then it adds the mapping disabled, and a later run
+  enables it. It turns on content sync once a mapping is enabled. A whitelist
+  item is a top-level folder or file under `sourcePath`.
+- With an administrator as the source's sync account, each spec user is mapped
+  once they have signed in to the replica with their source password (see Peer
+  Login below), on the replica's next run. Until then the report lists them
+  under "Waiting", which does not make the run exit 3. With `syncHistory`,
+  history sync is turned on once a user mapping is enabled.
 
 New libraries keep metadata, artwork, subtitles, lyrics, and trickplay in
 Jellyfin's state, not beside the media.
 
 **Sync accounts.** The source's sync account decides how links play:
 
-- Limited: content and links only. The source streams every replica user's
-  links as that account, so every replica user can play what it can see. Users
-  are not mapped, and setup refuses `syncHistory`.
+- Standard user: content and links only. The source streams every replica
+  user's links as that sync account, so every replica user can play what it can
+  see. Users are not mapped, and setup refuses `syncHistory`.
 - Administrator: the source streams a link as the replica user's mapped
-  source user, with that user's library access and limits. A replica user who
-  is not in the spec's users, such as the replica's local administrator, cannot
-  play links. Watch history can sync. A compromised replica has administrator
-  access to the source.
+  source user, with that user's library access and limits. As setup configures
+  the pair, the source streams no links for a replica user without an enabled
+  user mapping, such as the replica's initial administrator. Watch history can
+  sync. A compromised replica has administrator access to the source.
 
-Setup never changes an existing account's administrator rights or library
-access; it reports a mismatch.
+Setup never changes an existing user's administrator rights or library
+access. It reports a sync account whose administrator rights differ from the
+spec, and a standard one that sees every library or misses one of the spec's.
 
 **Reruns.** Run setup again at any time. It only adds what is missing and
 enables the spec's mappings; it never removes, disables, or rewrites existing
-users, passwords, libraries, entries, keys, mappings, or grants. A rerun after
-a dashboard change keeps the change. Where the dashboard contradicts the spec,
-such as an entry with another URL or a mapping to another library, the report
-names the conflict and how to resolve it. To stop syncing a library or user,
-remove it from the spec before disabling it, or the next run enables it again.
-Don't edit Server Sync in the dashboard while setup runs: its configuration is
-saved whole, so a save at the same moment can be lost.
+users, passwords, libraries, entries, entry keys, mappings, or grants. A rerun
+after a dashboard change keeps the change. Where the dashboard contradicts the
+spec, such as an entry with another URL or a mapping to another library, the
+report names the conflict and how to resolve it. To stop syncing a library,
+user, or whitelist item, remove it from the spec before disabling or removing
+it, or the next run turns it on or adds it again. Don't edit Server Sync in
+the dashboard while setup runs: its configuration is saved whole, so a save at
+the same moment can be lost.
 
 Exit statuses are the same as for `status`, below. An invalid spec exits 1
 before anything changes.
@@ -214,12 +219,12 @@ before anything changes.
 Setup leaves these to the dashboard. Non-video items in a Link mapping are
 copied, not linked.
 
-- The link cache: the `replica` module seeds a 50 GiB cache, 30-day
+- The link cache: the `replica` module seeds a 50 GiB link cache, 30-day
   retention, two episodes ahead, and a 5 MB/s download limit, only when Server
-  Sync has no configuration yet. The cache limit does not reserve disk space.
-  **Always Keep** creates permanent copies outside the cache budget; leave it
-  empty unless you have budgeted the space. Uncached videos need the source;
-  fully cached videos play during a source outage.
+  Sync has no configuration yet. The link cache limit does not reserve disk
+  space. **Always Keep** creates permanent copies outside the link cache
+  budget; leave it empty unless you have budgeted the space. Uncached videos
+  need the source; fully cached videos play during a source outage.
 - The source's link limits for the replica: streams at once, per-user limits,
   and speeds.
 - User settings and metadata sync.
@@ -237,8 +242,9 @@ changes configuration. Run it on each server; each run covers one direction.
 `sea-nettle setup` ends with the same report. `status` signs in as the initial
 administrator with the password in `initialAdmin.passwordFile`, and signs out
 before it exits. If the password was changed in the dashboard, update the file
-to match: each refused run counts as a failed sign-in, and Jellyfin disables
-the account once it reaches the account's lockout limit, if one is set.
+to match: each run refused for a wrong password counts as a failed sign-in, and
+Jellyfin disables the administrator once it reaches their lockout limit, if one
+is set.
 
 It lists each peer with Server Sync's link check verdict, then what needs
 attention and how to fix it: unreachable or unpaired peers, peers that do not
@@ -267,27 +273,29 @@ The `replica` module seeds its source URL from
 loopback addresses; otherwise every Peer Login sign-in is refused.
 
 - **First sign-in:** the replica asks the source. If the source accepts, the
-  replica creates the user without administrator rights and caches a hash of
-  the password.
+  replica creates the user without administrator rights and keeps a cached
+  password.
 - **Wrong or changed password:** if the source refuses, the replica refuses too,
-  even if the password matches its cache.
+  even if the password matches the cached one.
 - **Source outage:** a user who signed in before can sign in with the last
   password that the source accepted through the replica. New users cannot sign
   in. Source lockout does not apply to these attempts; set a lockout limit on the
   replica user if needed.
-- **Password changes:** the replica refuses them, and clients show a generic
-  error. Change the password on the source; the next replica sign-in that
-  reaches the source updates the cache.
+- **Password changes:** the replica refuses them, including an administrator's
+  reset and the forgot-password PIN. Clients show a generic error; the reason
+  is in the replica's log. Change the password on the source; the next replica
+  sign-in that the source accepts updates the cached password.
 - **Administrator rights:** never granted or changed by the plugin. Grant them
   on the replica if a user needs them.
 - **Existing replica users:** keep their current authentication provider. To
   switch one to source credentials, set **Authentication Provider** to Peer
   Login in the user's dashboard profile. Their current password stays valid
-  during outages until their next sign-in that reaches the source.
+  during outages until the source accepts a replica sign-in of theirs with
+  another password.
 - **Revoking access:** disabling or deleting a user on the source refuses their
   later sign-ins that reach the source. Their replica sessions and cached
   password stay valid, so disable or delete the replica user as well.
-- **Local accounts:** a replica account that uses another provider, such as the
+- **Local users:** a replica user who uses another provider, such as the
   initial administrator, never accepts source credentials, even if a
   source user has the same name.
 

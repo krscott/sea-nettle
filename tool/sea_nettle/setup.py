@@ -513,6 +513,8 @@ def run_setup(run: Run) -> None:
     run.ensure_libraries()
     account = run.ensure_grant()
     if account is None:
+        # This server's sync account is unusable, and this run granted it nothing: stop
+        # before the peer's part.
         return
     server_id = run.peer_id()
     if server_id is None:

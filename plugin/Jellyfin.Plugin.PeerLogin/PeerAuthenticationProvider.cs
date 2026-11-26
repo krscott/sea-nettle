@@ -112,7 +112,8 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     /// <inheritdoc />
     public Task ChangePassword(User user, string newPassword)
     {
-        // R-LOGIN-5
+        // R-LOGIN-5. This is Jellyfin's own SecurityException, which its API answers with 403;
+        // System.Security.SecurityException would become a 500.
         throw new SecurityException("Change this password on the source server.");
     }
 
@@ -131,13 +132,15 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
 
         if (!IsSourceBacked(user))
         {
-            // R-LOGIN-9
+            // The source's canonical name can belong to another provider's user even when the
+            // typed name resolved none (R-LOGIN-9).
             throw new AuthenticationException("The account does not use Peer Login.");
         }
 
         if (!MatchesCachedPassword(user, password))
         {
-            // R-LOGIN-3
+            // R-LOGIN-3. This is the default provider's hash format, so an administrator can
+            // switch the user back to that provider and keep the password.
             user.Password = _crypto.CreatePasswordHash(password).ToString();
             await userManager.UpdateUserAsync(user).ConfigureAwait(false);
         }
@@ -148,7 +151,8 @@ public sealed partial class PeerAuthenticationProvider : IAuthenticationProvider
     private async Task<ProviderAuthenticationResult> CreateUserAsync(IUserManager userManager, string username, string password)
     {
         // R-LOGIN-1. Jellyfin saves new users with the default provider and no password, which signs in
-        // with an empty password. Hash first to keep that window short, and never leave such a user behind.
+        // with an empty password. Hash first to keep that window short, and delete such a user if the
+        // second save fails. A crash between the two saves, or a failed delete, still leaves one.
         var hash = _crypto.CreatePasswordHash(password).ToString();
         var user = await userManager.CreateUserAsync(username).ConfigureAwait(false);
         try
