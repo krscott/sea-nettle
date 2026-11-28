@@ -225,8 +225,8 @@ copied, not linked.
   space. **Always Keep** creates copies outside the link cache budget; leave
   it empty unless you have budgeted the space. Uncached videos need the
   source; fully cached videos play during a source outage.
-- **Removed files**: the `replica` module seeds it as **Delete**, with the link
-  cache defaults. A full scan then removes links and copies whose files are
+- **Removed files**: the `replica` module seeds it as **Delete**, under the
+  same condition as the link cache defaults. A full scan then removes links and copies whose files are
   gone from the source, including a file's old path after it moves on the
   source. Server Sync holds a deletion for approval when it cannot be sure it
   wrote the file.
