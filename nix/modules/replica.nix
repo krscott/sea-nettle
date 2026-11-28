@@ -22,6 +22,9 @@ let
       <LinkCachePreCacheEpisodes>2</LinkCachePreCacheEpisodes>
       <MaxDownloadSpeed>5</MaxDownloadSpeed>
       <DownloadSpeedUnit>MB</DownloadSpeedUnit>
+      <!-- A file moved on the source gets a new item; Keep would leave its old link as a duplicate. -->
+      <MissingContentAction>Delete</MissingContentAction>
+      <DeleteMissingContentMode>Enabled</DeleteMissingContentMode>
     </PluginConfiguration>
   '';
 

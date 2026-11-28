@@ -452,6 +452,12 @@ in
         assert server_sync["Version"] == "12.2.11.4", server_sync
         assert server_sync["Status"] == "Active", server_sync
 
+    with subtest("Server Sync loads the seeded link cache defaults"):
+        config = server_sync_config(replica, replica_admin)
+        assert config["LinkCacheSizeGb"] == 50, config
+        assert config["MissingContentAction"] == "Delete", config
+        assert config["DeleteMissingContentMode"] == "Enabled", config
+
     with subtest("R-SERVER-2, R-SERVER-6: dashboard changes survive restarts and activation"):
         write_admin_password(replica, "changed-pw")
         config = api(replica, "GET", f"/Plugins/{PEER_LOGIN}/Configuration", token=replica_admin)
