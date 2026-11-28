@@ -222,9 +222,14 @@ copied, not linked.
 - The link cache: the `replica` module seeds a 50 GiB link cache, 30-day
   retention, two episodes ahead, and a 5 MB/s download limit, only when Server
   Sync has no configuration yet. The link cache limit does not reserve disk
-  space. **Always Keep** creates permanent copies outside the link cache
-  budget; leave it empty unless you have budgeted the space. Uncached videos
-  need the source; fully cached videos play during a source outage.
+  space. **Always Keep** creates copies outside the link cache budget; leave
+  it empty unless you have budgeted the space. Uncached videos need the
+  source; fully cached videos play during a source outage.
+- **Removed files**: the `replica` module seeds it as **Delete**, under the
+  same condition as the link cache defaults. A full scan then removes links and copies whose files are
+  gone from the source, including a file's old path after it moves on the
+  source. Server Sync holds a deletion for approval when it cannot be sure it
+  wrote the file.
 - The source's link limits for the replica: streams at once, per-user limits,
   and speeds.
 - User settings and metadata sync.
