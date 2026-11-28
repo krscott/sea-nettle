@@ -452,7 +452,7 @@ in
         assert server_sync["Version"] == "12.2.11.4", server_sync
         assert server_sync["Status"] == "Active", server_sync
 
-    with subtest("Server Sync loads the seeded link cache defaults"):
+    with subtest("Server Sync loads the seeded defaults"):
         config = server_sync_config(replica, replica_admin)
         assert config["LinkCacheSizeGb"] == 50, config
         assert config["MissingContentAction"] == "Delete", config
